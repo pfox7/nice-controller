@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>Gate Controller</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#1a1a1a;color:#fff;padding:10px;min-height:100vh}
+h1{text-align:center;margin:10px 0;font-size:24px}
+h2{font-size:18px;margin:10px 0}
+.tabs{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:15px}
+.tabs button{flex:1;min-width:60px;padding:8px 5px;font-size:11px;background:#333;color:#fff;border:none;border-radius:5px;cursor:pointer}
+.tabs button.active{background:#4CAF50}
+.tabcontent{display:none}
+.tabcontent.active{display:block}
+.control-btn{display:block;width:100%;padding:20px;margin:10px 0;font-size:22px;font-weight:bold;border:none;border-radius:12px;color:#fff;cursor:pointer}
+.open{background:#4CAF50}
+.close{background:#FF9800}
+.stop{background:#f44336}
+input,textarea,select{width:100%;padding:10px;margin:5px 0;border-radius:8px;border:none;font-size:14px;background:#333;color:#fff}
+button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:8px;font-size:14px;cursor:pointer;margin:5px 0}
+button.danger{background:#f44336}
+.status{margin:10px 0;padding:10px;background:#333;border-radius:8px;text-align:center;font-size:16px}
+.info{background:#333;padding:10px;border-radius:8px;text-align:center;margin:10px 0}
+.loader{display:inline-block;width:20px;height:20px;border:3px solid rgba(255,255,255,.3);border-radius:50%;border-top-color:#fff;animation:spin 1s linear infinite;vertical-align:middle;margin-left:10px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.modal{display:none;position:fixed;z-index:100;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,0.7)}
+.modal-content{background:#222;margin:10% auto;padding:20px;border-radius:10px;width:90%;max-width:400px;text-align:center;color:#fff}
+.device-item{padding:10px;margin:5px 0;background:#333;border-radius:8px}
+.network-item{padding:10px;margin:5px 0;background:#333;border-radius:8px;cursor:pointer}
+#logArea{width:100%;height:300px;background:#111;color:#0f0;font-family:monospace;font-size:12px;border:none;padding:5px;resize:vertical}
+</style>
+</head>
+<body>
+
+<h1>Управление воротами<br><small id="ver">...</small></h1>
+<div class="info">IP: <span id="ip">--</span> | Имя: <span id="host">gatecontroller.local</span></div>
+
+<div class="tabs" id="tabsContainer">
+  <button class="active" onclick="openTab(event,'control')">Управление</button>
+  <button onclick="openTab(event,'wifi')">Wi-Fi</button>
+  <button onclick="openTab(event,'mqtt')">MQTT</button>
+  <button onclick="openTab(event,'tls')" id="tabTLS" style="display:none">TLS</button>
+  <button onclick="openTab(event,'ble')">BLE</button>
+  <button onclick="openTab(event,'devices')">Устройства</button>
+  <button onclick="openTab(event,'ota')">OTA</button>
+  <button onclick="openTab(event,'log')">Логи</button>
+  <button onclick="openTab(event,'test')">Тестирование</button>
+  <button onclick="openTab(event,'motor')">Двигатель</button>
+</div>
+
+<div id="control" class="tabcontent active">
+  <button class="control-btn open" onclick="sendCommand(event,'/open')">ОТКРЫТЬ</button>
+  <button class="control-btn stop" onclick="sendCommand(event,'/stop')">СТОП</button>
+  <button class="control-btn close" onclick="sendCommand(event,'/close')">ЗАКРЫТЬ</button>
+  <div class="status">Состояние: <span id="state">-</span> | Ток: <span id="current">0.00</span> А</div>
+</div>
+
+<div id="wifi" class="tabcontent">
+  <h2>Wi-Fi сети</h2>
+  <button id="scanBtn" onclick="scanNetworks()">Сканировать</button>
+  <div id="networks"></div>
+</div>
+
+<div id="mqtt" class="tabcontent">
+  <h2>Настройки MQTT</h2>
+  <input id="mqtt_server" placeholder="Сервер (IP адрес)">
+  <input id="mqtt_port" type="number" placeholder="Порт (1883)">
+  <input id="mqtt_user" placeholder="Логин">
+  <input id="mqtt_password" type="password" placeholder="Пароль">
+  <input id="mqtt_topic" placeholder="Топик (gate)">
+  <label><input type="checkbox" id="mqtt_retain"> Retain</label>
+  <button onclick="saveMQTT(event)">Сохранить</button>
+</div>
+
+<div id="tls" class="tabcontent">
+  <h2>MQTT TLS</h2>
+  <label><input type="checkbox" id="tls_enabled"> Включить TLS</label>
+  <textarea id="ca_cert" rows="3" placeholder="CA сертификат"></textarea>
+  <button onclick="saveTLS(event)">Сохранить TLS</button>
+</div>
+
+<div id="ble" class="tabcontent">
+  <h2>Bluetooth</h2>
+  <label><input type="checkbox" id="ble_enabled"> Включить BLE</label>
+  <select id="ble_mode"><option value="0">UART</option><option value="1">HID</option></select>
+  <button onclick="saveBLE(event)">Сохранить BLE</button>
+</div>
+
+<div id="devices" class="tabcontent">
+  <h2>Привязанные устройства</h2>
+  <button onclick="refreshDevices()">Обновить</button>
+  <div id="deviceList"></div>
+</div>
+
+<div id="ota" class="tabcontent">
+  <h2>Обновление</h2>
+  <input type="file" id="firmware" accept=".bin">
+  <button onclick="uploadFirmware(event)">Обновить</button>
+  <div id="otaProgress"></div>
+</div>
+
+<div id="log" class="tabcontent">
+  <h2>Логи</h2>
+  <textarea id="logArea" readonly></textarea>
+  <button onclick="refreshLog()">Обновить</button>
+  <button onclick="clearLog()">Очистить</button>
+</div>
+
+<div id="test" class="tabcontent">
+  <h2>Тестирование</h2>
+  <button class="open" onclick="testCommand('/testopen')">Тест ОТКРЫТЬ</button>
+  <button class="stop" onclick="testCommand('/teststop')">Стоп</button>
+  <button class="close" onclick="testCommand('/testclose')">Тест ЗАКРЫТЬ</button>
+</div>
+
+<div id="motor" class="tabcontent">
+  <h2>Настройки двигателя</h2>
+  <h3>Датчик тока</h3>
+  <label>Тип датчика:</label>
+  <select id="sensorType" onchange="saveSensorType()">
+    <option value="0">5A</option>
+    <option value="1">20A</option>
+    <option value="2">30A</option>
+  </select>
+  <button onclick="recalibrate()">Перекалибровать</button>
+  <h3>Порог препятствия</h3>
+  <input type="number" id="thresholdInput" step="0.1" value="6.0">
+  <button onclick="saveThreshold()">Сохранить порог</button>
+  <button onclick="startCalibration()">Автокалибровка порога</button>
+  <div id="calibrationStatus"></div>
+</div>
+
+<script>
+// Общие функции (openTab, updateInfo, updateStatus, sendCommand, fillTab, scanNetworks, saveMQTT, saveTLS, saveBLE, refreshDevices, uploadFirmware, refreshLog, clearLog, testCommand) — аналогичны предыдущим версиям, но дополнены для новых полей.
+
+function openTab(evt, tabName) {
+  document.querySelectorAll('.tabcontent').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('active'));
+  document.getElementById(tabName).classList.add('active');
+  evt.currentTarget.classList.add('active');
+  if (tabName === 'log') refreshLog();
+  else if (tabName === 'motor') fillMotorTab();
+}
+
+function updateInfo() {
+  fetch('/info').then(r=>r.json()).then(d=>{
+    document.getElementById('ip').innerText = d.ip || '--';
+    document.getElementById('host').innerText = d.hostname || 'gatecontroller.local';
+    document.getElementById('ver').innerText = d.version || '';
+    if (d.tls_available) document.getElementById('tabTLS').style.display='inline-block';
+    else document.getElementById('tabTLS').style.display='none';
+    window._info = d;
+  }).catch(()=>{});
+}
+setInterval(updateInfo, 5000);
+updateInfo();
+
+function updateStatus() {
+  fetch('/status').then(r=>r.json()).then(d=>{
+    document.getElementById('state').innerText = d.state || '-';
+    document.getElementById('current').innerText = d.current ? d.current.toFixed(2) : '0.00';
+  });
+}
+setInterval(updateStatus, 2000);
+updateStatus();
+
+function sendCommand(ev, url) {
+  let btn = ev.target;
+  btn.disabled = true;
+  fetch(url).then(r=>r.text()).finally(()=>{ btn.disabled = false; });
+}
+
+function fillMotorTab() {
+  const d = window._info;
+  if (d) {
+    document.getElementById('sensorType').value = d.sensor_type;
+    document.getElementById('thresholdInput').value = d.current_threshold;
+  }
+}
+
+function saveSensorType() {
+  fetch('/set_current_sensor_type', {
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'type='+document.getElementById('sensorType').value
+  }).then(r=>r.text()).then(()=>updateInfo());
+}
+
+function recalibrate() {
+  fetch('/recalibrate_current').then(r=>r.text()).then(()=>alert('Калибровка выполнена'));
+}
+
+function saveThreshold() {
+  fetch('/set_threshold', {
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'value='+document.getElementById('thresholdInput').value
+  }).then(r=>r.text()).then(()=>alert('Порог сохранён'));
+}
+
+let calibInterval = null;
+function startCalibration() {
+  fetch('/calibration/start').then(r=>r.text()).then(()=>{
+    document.getElementById('calibrationStatus').innerHTML = 'Калибровка начата. Выполняйте инструкции.';
+    calibInterval = setInterval(updateCalibrationStatus, 1000);
+  });
+}
+
+function finishStep() {
+  fetch('/calibration/finish_step').then(r=>r.text()).then(()=>{
+    updateCalibrationStatus();
+  });
+}
+
+function updateCalibrationStatus() {
+  fetch('/calibration/status').then(r=>r.json()).then(d=>{
+    if (d.step === 0) {
+      clearInterval(calibInterval);
+      document.getElementById('calibrationStatus').innerHTML = '<b>Калибровка завершена!</b> Порог установлен: ' + d.threshold + ' А';
+      updateInfo();
+    } else {
+      let instruction = '';
+      switch(d.step) {
+        case 1: instruction = 'Запустите двигатель (кнопка ОТКРЫТЬ), дайте поработать 5 секунд без препятствий, затем нажмите СТОП и кнопку "Завершить шаг".'; break;
+        case 2: instruction = 'Запустите двигатель до полного открытия (концевик откроет), дождитесь остановки, затем нажмите "Завершить шаг".'; break;
+        case 3: instruction = 'Запустите двигатель до полного закрытия (концевик закроет), дождитесь остановки, затем нажмите "Завершить шаг".'; break;
+        case 4: instruction = 'Запустите двигатель и физически застопорьте ворота (препятствие), дождитесь остановки (или сами нажмите СТОП), затем нажмите "Завершить шаг".'; break;
+      }
+      document.getElementById('calibrationStatus').innerHTML = '<b>Шаг ' + d.step + ':</b> ' + instruction +
+        '<br><small>Измеренные значения: ' + d.values.map(v=>v.toFixed(2)).join(', ') + '</small>' +
+        '<br><button onclick="finishStep()">Завершить шаг</button>';
+    }
+  });
+}
+</script>
+</body>
+</html>
