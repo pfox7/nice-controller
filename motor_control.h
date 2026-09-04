@@ -26,11 +26,4 @@ bool readFCC();
 
 void handleStartRelay();
 
-// Калибровка
-extern uint8_t calibrationStep;
-extern float calibValues[4];
-void calibrationStart();
-void calibrationFinishStep();
-void calibrationAbort();
-
 #endif
