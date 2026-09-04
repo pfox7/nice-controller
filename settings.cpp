@@ -9,64 +9,125 @@ int bondedCount = 0;
 static Preferences prefs;
 
 bool validateSettings() {
-  if (settings.device_name[0] == '\0' || strlen(settings.device_name) > 32) return false;
-  if (settings.mqtt_port > 65535) return false;
-  if (strlen(settings.mqtt_server) > 64) return false;
-  if (settings.current_threshold < 0.1f || settings.current_threshold > 20.0f) return false;
-  if (settings.wifi_timeout > 60) return false;
-  if (settings.timezone < -12 || settings.timezone > 12) return false;
-  if (settings.current_sensor_type > 2) return false;
+  if (settings.device_name[0] == '\0' || strlen(settings.device_name) > 32) {
+    logMessage("Настройки: некорректное имя устройства");
+    return false;
+  }
+  for (size_t i = 0; i < strlen(settings.device_name); i++) {
+    if (settings.device_name[i] < 32 || settings.device_name[i] > 126) {
+      logMessage("Настройки: мусорные символы в имени устройства");
+      return false;
+    }
+  }
+  if (settings.mqtt_port > 65535) {
+    logMessage("Настройки: некорректный порт MQTT");
+    return false;
+  }
+  if (strlen(settings.mqtt_server) > 64) {
+    logMessage("Настройки: некорректный сервер MQTT");
+    return false;
+  }
+  if (settings.current_threshold < 0.1f || settings.current_threshold > 20.0f) {
+    logMessage("Настройки: некорректный порог тока");
+    return false;
+  }
+  if (settings.wifi_timeout > 60) {
+    logMessage("Настройки: некорректный таймаут Wi-Fi");
+    return false;
+  }
+  if (settings.timezone < -12 || settings.timezone > 12) {
+    logMessage("Настройки: некорректная временная зона");
+    return false;
+  }
+  for (int i = 0; i < 33 && settings.sta_ssid[i]; i++) {
+    if (settings.sta_ssid[i] < 32 || settings.sta_ssid[i] > 126) {
+      logMessage("Настройки: мусор в sta_ssid");
+      return false;
+    }
+  }
+  for (int i = 0; i < 65 && settings.sta_password[i]; i++) {
+    if (settings.sta_password[i] < 32 || settings.sta_password[i] > 126) {
+      logMessage("Настройки: мусор в sta_password");
+      return false;
+    }
+  }
+#ifdef ENABLE_TLS
+  if (settings.mqtt_tls_enabled) {
+    // Дополнительные проверки TLS
+  }
+#endif
   return true;
 }
 
 void initSettings() {
   prefs.begin("gate", false);
+  
+  String val;
   settings.timezone = prefs.getChar("tz", 3);
   settings.mqtt_port = prefs.getUShort("mqtt_port", 1883);
   settings.current_threshold = prefs.getFloat("cur_thr", DEFAULT_THRESHOLD);
   settings.wifi_timeout = prefs.getUChar("wifi_to", 5);
+  
   settings.ble_enabled = prefs.getBool("ble_en", false);
   settings.ble_hid_mode = prefs.getBool("ble_hid", false);
   settings.mqtt_retain = prefs.getBool("mqtt_ret", false);
-  settings.current_sensor_type = prefs.getUChar("cur_sens", 0);
-
-  String val;
+  
+#ifdef ENABLE_TLS
+  settings.mqtt_tls_enabled = prefs.getBool("tls_en", false);
+  settings.mqtt_verify_depth = prefs.getBool("tls_vd", false);
+  settings.ca_cert_present = prefs.getBool("ca_cert", false);
+  settings.client_cert_present = prefs.getBool("cl_cert", false);
+  settings.client_key_present = prefs.getBool("cl_key", false);
+#endif
+  
   val = prefs.getString("sta_ssid", "");
   strncpy(settings.sta_ssid, val.c_str(), sizeof(settings.sta_ssid)-1);
   settings.sta_ssid[sizeof(settings.sta_ssid)-1] = '\0';
-
+  
   val = prefs.getString("sta_pass", "");
   strncpy(settings.sta_password, val.c_str(), sizeof(settings.sta_password)-1);
   settings.sta_password[sizeof(settings.sta_password)-1] = '\0';
-
+  
   val = prefs.getString("mqtt_srv", "");
   strncpy(settings.mqtt_server, val.c_str(), sizeof(settings.mqtt_server)-1);
   settings.mqtt_server[sizeof(settings.mqtt_server)-1] = '\0';
-
+  
   val = prefs.getString("mqtt_user", "");
   strncpy(settings.mqtt_user, val.c_str(), sizeof(settings.mqtt_user)-1);
   settings.mqtt_user[sizeof(settings.mqtt_user)-1] = '\0';
-
+  
   val = prefs.getString("mqtt_pass", "");
   strncpy(settings.mqtt_password, val.c_str(), sizeof(settings.mqtt_password)-1);
   settings.mqtt_password[sizeof(settings.mqtt_password)-1] = '\0';
-
+  
   val = prefs.getString("mqtt_topic", "gate");
   strncpy(settings.mqtt_topic, val.c_str(), sizeof(settings.mqtt_topic)-1);
   settings.mqtt_topic[sizeof(settings.mqtt_topic)-1] = '\0';
-
+  
   val = prefs.getString("dev_name", "GateController");
   strncpy(settings.device_name, val.c_str(), sizeof(settings.device_name)-1);
   settings.device_name[sizeof(settings.device_name)-1] = '\0';
-
+  
   prefs.end();
-
-  if (settings.device_name[0] == '\0' || !validateSettings()) {
+  
+  if (settings.device_name[0] == '\0') {
+    resetSettings();
+    saveSettings();
+  } else if (!validateSettings()) {
     resetSettings();
     saveSettings();
   }
-
+  
   logMessage("Настройки загружены");
+  logMessage("  Имя устройства: " + String(settings.device_name));
+  logMessage("  Сервер MQTT: " + String(settings.mqtt_server));
+  logMessage("  Порт MQTT: " + String(settings.mqtt_port));
+  logMessage("  Топик MQTT: " + String(settings.mqtt_topic));
+  logMessage("  Порог тока: " + String(settings.current_threshold, 1) + " А");
+  logMessage("  Таймаут Wi-Fi: " + String(settings.wifi_timeout) + " мин");
+  logMessage("  BLE: " + String(settings.ble_enabled ? "да" : "нет"));
+  logMessage("  Retain: " + String(settings.mqtt_retain ? "да" : "нет"));
+  logMessage("  Часовой пояс: UTC" + String(settings.timezone >= 0 ? "+" : "") + String(settings.timezone));
 }
 
 void resetSettings() {
@@ -78,19 +139,29 @@ void resetSettings() {
   settings.current_threshold = DEFAULT_THRESHOLD;
   strcpy(settings.mqtt_topic, "gate");
   settings.timezone = 3;
-  settings.current_sensor_type = 0;
+  logMessage("Настройки сброшены на значения по умолчанию");
 }
 
 void saveSettings() {
   prefs.begin("gate", false);
+  
   prefs.putChar("tz", settings.timezone);
   prefs.putUShort("mqtt_port", settings.mqtt_port);
   prefs.putFloat("cur_thr", settings.current_threshold);
   prefs.putUChar("wifi_to", settings.wifi_timeout);
+  
   prefs.putBool("ble_en", settings.ble_enabled);
   prefs.putBool("ble_hid", settings.ble_hid_mode);
   prefs.putBool("mqtt_ret", settings.mqtt_retain);
-  prefs.putUChar("cur_sens", settings.current_sensor_type);
+  
+#ifdef ENABLE_TLS
+  prefs.putBool("tls_en", settings.mqtt_tls_enabled);
+  prefs.putBool("tls_vd", settings.mqtt_verify_depth);
+  prefs.putBool("ca_cert", settings.ca_cert_present);
+  prefs.putBool("cl_cert", settings.client_cert_present);
+  prefs.putBool("cl_key", settings.client_key_present);
+#endif
+  
   prefs.putString("sta_ssid", settings.sta_ssid);
   prefs.putString("sta_pass", settings.sta_password);
   prefs.putString("mqtt_srv", settings.mqtt_server);
@@ -98,8 +169,16 @@ void saveSettings() {
   prefs.putString("mqtt_pass", settings.mqtt_password);
   prefs.putString("mqtt_topic", settings.mqtt_topic);
   prefs.putString("dev_name", settings.device_name);
+  
   prefs.end();
-  logMessage("Настройки сохранены");
+  logMessage("Настройки сохранены в Preferences");
+  logMessage("  Имя: " + String(settings.device_name) +
+             ", MQTT: " + String(settings.mqtt_server) +
+             ":" + String(settings.mqtt_port) +
+             ", Топик: " + String(settings.mqtt_topic) +
+             ", Retain: " + String(settings.mqtt_retain ? "да" : "нет") +
+             ", BLE: " + String(settings.ble_enabled ? "вкл" : "выкл") +
+             ", Wi-Fi: " + String(settings.sta_ssid));
 }
 
 void loadBondedDevices() {
@@ -112,6 +191,7 @@ void loadBondedDevices() {
     addr += sizeof(BondedDevice);
   }
   EEPROM.end();
+  logMessage("Привязанные устройства: загружено " + String(bondedCount));
 }
 
 void saveBondedDevices() {
@@ -125,6 +205,7 @@ void saveBondedDevices() {
   }
   EEPROM.commit();
   EEPROM.end();
+  logMessage("Привязанные устройства сохранены");
 }
 
 int findBondedDevice(String address) {
@@ -141,6 +222,7 @@ int addBondedDevice(String address, String name, String pin) {
     name.toCharArray(bondedDevices[idx].name, 33);
     pin.toCharArray(bondedDevices[idx].pin, PIN_CODE_LENGTH + 1);
     saveBondedDevices();
+    logMessage("Привязанное устройство обновлено: " + address);
     return idx;
   }
   for (int i = 0; i < MAX_BONDED_DEVICES; i++) {
@@ -151,9 +233,11 @@ int addBondedDevice(String address, String name, String pin) {
       bondedDevices[i].active = true;
       bondedCount++;
       saveBondedDevices();
+      logMessage("Привязанное устройство добавлено: " + address);
       return i;
     }
   }
+  logMessage("Привязанные устройства: список заполнен!");
   return -1;
 }
 
@@ -163,6 +247,7 @@ bool removeBondedDevice(String address) {
       bondedDevices[i].active = false;
       bondedCount--;
       saveBondedDevices();
+      logMessage("Привязанное устройство удалено: " + address);
       return true;
     }
   }

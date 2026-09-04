@@ -6,9 +6,6 @@ State currentState = IDLE;
 unsigned long moveStartTime = 0;
 bool testMode = false;
 
-uint8_t calibrationStep = 0;
-float calibValues[4] = {0, 0, 0, 0};
-
 void motorSetup() {
   pinMode(SSR_MAIN_PIN, OUTPUT);
   pinMode(RELAY_CAP_PIN, OUTPUT);
@@ -21,7 +18,7 @@ void motorSetup() {
   digitalWrite(RELAY_CAP_PIN, RELAY_OFF);
   digitalWrite(START_RELAY_PIN, RELAY_OFF);
   digitalWrite(LED_PIN, LOW);
-  logMessage("Двигатель: инициализирован");
+  logMessage("Двигатель: инициализирован (1 SSR + 2 реле)");
 }
 
 void startForward() {
@@ -33,7 +30,7 @@ void startForward() {
   stopMotor();
   delay(50);
   digitalWrite(SSR_MAIN_PIN, SSR_ON);
-  digitalWrite(RELAY_CAP_PIN, RELAY_OFF);   // конденсатор к B
+  digitalWrite(RELAY_CAP_PIN, RELAY_OFF);   // ИЗМЕНЕНО: конденсатор к B (для открытия)
   currentState = MOVING_FORWARD;
   moveStartTime = millis();
   digitalWrite(LED_PIN, HIGH);
@@ -49,7 +46,7 @@ void startReverse() {
   stopMotor();
   delay(50);
   digitalWrite(SSR_MAIN_PIN, SSR_ON);
-  digitalWrite(RELAY_CAP_PIN, RELAY_ON);    // конденсатор к A
+  digitalWrite(RELAY_CAP_PIN, RELAY_ON);    // ИЗМЕНЕНО: конденсатор к A (для закрытия)
   currentState = MOVING_REVERSE;
   moveStartTime = millis();
   digitalWrite(LED_PIN, HIGH);
@@ -103,7 +100,7 @@ void testForward() {
   currentState = MOVING_FORWARD;
   moveStartTime = millis();
   digitalWrite(LED_PIN, HIGH);
-  logMessage("Тест: ОТКРЫТЬ");
+  logMessage("Тест: ОТКРЫТЬ (концевики игнорируются)");
 }
 
 void testReverse() {
@@ -115,7 +112,7 @@ void testReverse() {
   currentState = MOVING_REVERSE;
   moveStartTime = millis();
   digitalWrite(LED_PIN, HIGH);
-  logMessage("Тест: ЗАКРЫТЬ");
+  logMessage("Тест: ЗАКРЫТЬ (концевики игнорируются)");
 }
 
 void testStop() {
@@ -157,44 +154,4 @@ void handleStartRelay() {
     startRelayActive = false;
     startDone = false;
   }
-}
-
-// === Калибровка ===
-
-void calibrationStart() {
-  calibrationStep = 1;
-  for (int i = 0; i < 4; i++) calibValues[i] = 0;
-  logMessage("Калибровка порога начата");
-}
-
-void calibrationFinishStep() {
-  if (calibrationStep == 0 || calibrationStep > 4) return;
-  
-  // Усредняем 10 измерений с интервалом 100 мс
-  float sum = 0;
-  for (int i = 0; i < 10; i++) {
-    sum += readCurrent();
-    delay(100);
-  }
-  calibValues[calibrationStep - 1] = sum / 10.0f;
-  logMessage("Шаг " + String(calibrationStep) + " завершён, ток: " + String(calibValues[calibrationStep - 1], 2) + " А");
-
-  if (calibrationStep < 4) {
-    calibrationStep++;
-  } else {
-    // Все шаги завершены, вычисляем порог
-    float normalMax = max(calibValues[0], max(calibValues[1], calibValues[2]));
-    float obstacleMin = calibValues[3];
-    float threshold = (normalMax + obstacleMin) / 2.0f;
-    if (threshold < 0.5f) threshold = 0.5f;   // страховка
-    settings.current_threshold = threshold;
-    saveSettings();
-    logMessage("Калибровка завершена. Порог установлен: " + String(threshold, 2) + " А");
-    calibrationStep = 0;  // сброс
-  }
-}
-
-void calibrationAbort() {
-  calibrationStep = 0;
-  logMessage("Калибровка прервана");
 }

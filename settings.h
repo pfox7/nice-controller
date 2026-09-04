@@ -32,7 +32,6 @@ struct Settings {
   bool ble_hid_mode;
   bool mqtt_retain;
   int8_t timezone;
-  uint8_t current_sensor_type;   // 0=5A, 1=20A, 2=30A
 };
 
 extern Settings settings;

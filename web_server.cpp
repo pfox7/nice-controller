@@ -78,8 +78,6 @@ void initWebServer() {
     json += "\"mqtt_retain\":" + String(settings.mqtt_retain ? "true" : "false") + ",";
     json += "\"ble_enabled\":" + String(settings.ble_enabled ? "true" : "false") + ",";
     json += "\"ble_mode\":\"" + String(settings.ble_hid_mode ? "HID" : "UART") + "\",";
-    json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
-    json += "\"sensor_type\":" + String(settings.current_sensor_type) + ",";
     json += "\"version\":\"" + String(FIRMWARE_VERSION) + "\",";
     json += "\"tls_available\":false";
     json += "}";
@@ -234,31 +232,7 @@ void initWebServer() {
       }
     }
   });
-
-  server.on("/calibration/start", []() {
-    calibrationStart();
-    server.send(200, "text/plain", "OK");
-  });
-
-  server.on("/calibration/finish_step", []() {
-    calibrationFinishStep();
-    server.send(200, "text/plain", "OK");
-  });
-
-  server.on("/calibration/status", []() {
-    String json = "{";
-    json += "\"step\":" + String(calibrationStep) + ",";
-    json += "\"values\":[";
-    for (int i = 0; i < 4; i++) {
-      if (i > 0) json += ",";
-      json += String(calibValues[i], 2);
-    }
-    json += "],";
-    json += "\"threshold\":" + String(settings.current_threshold, 2);
-    json += "}";
-    server.send(200, "application/json", json);
-  });
-
+  
   server.onNotFound([]() { server.send(404, "text/plain", "Not Found"); });
   
   server.on("/log", []() { server.send(200, "text/plain; charset=utf-8", logRead()); });

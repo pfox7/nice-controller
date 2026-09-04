@@ -16,12 +16,14 @@ h2{font-size:18px;margin:10px 0}
 .tabs button.active{background:#4CAF50}
 .tabcontent{display:none}
 .tabcontent.active{display:block}
-.control-btn{display:block;width:100%;padding:20px;margin:10px 0;font-size:22px;font-weight:bold;border:none;border-radius:12px;color:#fff;cursor:pointer}
+.control-btn{display:block;width:100%;padding:20px;margin:10px 0;font-size:22px;font-weight:bold;border:none;border-radius:12px;color:#fff;cursor:pointer;position:relative}
+.control-btn:disabled{opacity:0.6;cursor:not-allowed}
 .open{background:#4CAF50}
 .close{background:#FF9800}
 .stop{background:#f44336}
 input,textarea,select{width:100%;padding:10px;margin:5px 0;border-radius:8px;border:none;font-size:14px;background:#333;color:#fff}
 button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:8px;font-size:14px;cursor:pointer;margin:5px 0}
+button:disabled{opacity:0.6;cursor:not-allowed}
 button.danger{background:#f44336}
 .status{margin:10px 0;padding:10px;background:#333;border-radius:8px;text-align:center;font-size:16px}
 .info{background:#333;padding:10px;border-radius:8px;text-align:center;margin:10px 0}
@@ -29,15 +31,22 @@ button.danger{background:#f44336}
 @keyframes spin{to{transform:rotate(360deg)}}
 .modal{display:none;position:fixed;z-index:100;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,0.7)}
 .modal-content{background:#222;margin:10% auto;padding:20px;border-radius:10px;width:90%;max-width:400px;text-align:center;color:#fff}
+.modal-buttons{display:flex;justify-content:center;gap:10px;margin-top:15px}
+.modal-buttons button{width:auto;padding:8px 25px;font-size:16px}
 .device-item{padding:10px;margin:5px 0;background:#333;border-radius:8px}
+.device-item button{background:#f44336;padding:5px 10px;font-size:12px;float:right}
 .network-item{padding:10px;margin:5px 0;background:#333;border-radius:8px;cursor:pointer}
+.network-item:hover{background:#444}
+label{display:block;margin:8px 0}
 #logArea{width:100%;height:300px;background:#111;color:#0f0;font-family:monospace;font-size:12px;border:none;padding:5px;resize:vertical}
 </style>
 </head>
 <body>
 
-<h1>Управление воротами<br><small id="ver">...</small></h1>
-<div class="info">IP: <span id="ip">--</span> | Имя: <span id="host">gatecontroller.local</span></div>
+<h1>Управление воротами<br><small style="font-size:16px;color:#aaa" id="ver">...</small></h1>
+<div class="info">
+  IP: <span id="ip">--</span> | Имя: <span id="host">gatecontroller.local</span>
+</div>
 
 <div class="tabs" id="tabsContainer">
   <button class="active" onclick="openTab(event,'control')">Управление</button>
@@ -49,14 +58,17 @@ button.danger{background:#f44336}
   <button onclick="openTab(event,'ota')">OTA</button>
   <button onclick="openTab(event,'log')">Логи</button>
   <button onclick="openTab(event,'test')">Тестирование</button>
-  <button onclick="openTab(event,'motor')">Двигатель</button>
+  <button onclick="openTab(event,'htmlupdate')">Обновить HTML</button>
 </div>
 
 <div id="control" class="tabcontent active">
   <button class="control-btn open" onclick="sendCommand(event,'/open')">ОТКРЫТЬ</button>
   <button class="control-btn stop" onclick="sendCommand(event,'/stop')">СТОП</button>
   <button class="control-btn close" onclick="sendCommand(event,'/close')">ЗАКРЫТЬ</button>
-  <div class="status">Состояние: <span id="state">-</span> | Ток: <span id="current">0.00</span> А</div>
+  <div class="status">
+    Состояние: <span id="state">-</span> | Ток: <span id="current">0.00</span> А<br>
+    FCA (Открыто): <span id="fca">-</span> | FCC (Закрыто): <span id="fcc">-</span>
+  </div>
 </div>
 
 <div id="wifi" class="tabcontent">
@@ -72,21 +84,27 @@ button.danger{background:#f44336}
   <input id="mqtt_user" placeholder="Логин">
   <input id="mqtt_password" type="password" placeholder="Пароль">
   <input id="mqtt_topic" placeholder="Топик (gate)">
-  <label><input type="checkbox" id="mqtt_retain"> Retain</label>
-  <button onclick="saveMQTT(event)">Сохранить</button>
+  <label><input type="checkbox" id="mqtt_retain"> Retain (сохранять сообщения)</label>
+  <button onclick="saveMQTT(event)">Сохранить MQTT</button>
 </div>
 
 <div id="tls" class="tabcontent">
   <h2>MQTT TLS</h2>
   <label><input type="checkbox" id="tls_enabled"> Включить TLS</label>
-  <textarea id="ca_cert" rows="3" placeholder="CA сертификат"></textarea>
+  <textarea id="ca_cert" rows="3" placeholder="CA сертификат (PEM)"></textarea>
+  <textarea id="client_cert" rows="3" placeholder="Клиентский сертификат (PEM)"></textarea>
+  <textarea id="client_key" rows="3" placeholder="Приватный ключ (PEM)"></textarea>
+  <label><input type="checkbox" id="verify_depth"> Глубокая проверка</label>
   <button onclick="saveTLS(event)">Сохранить TLS</button>
 </div>
 
 <div id="ble" class="tabcontent">
-  <h2>Bluetooth</h2>
+  <h2>Настройки Bluetooth</h2>
   <label><input type="checkbox" id="ble_enabled"> Включить BLE</label>
-  <select id="ble_mode"><option value="0">UART</option><option value="1">HID</option></select>
+  <select id="ble_mode">
+    <option value="0">UART режим</option>
+    <option value="1">HID клавиатура</option>
+  </select>
   <button onclick="saveBLE(event)">Сохранить BLE</button>
 </div>
 
@@ -97,53 +115,97 @@ button.danger{background:#f44336}
 </div>
 
 <div id="ota" class="tabcontent">
-  <h2>Обновление</h2>
+  <h2>Обновление прошивки</h2>
   <input type="file" id="firmware" accept=".bin">
   <button onclick="uploadFirmware(event)">Обновить</button>
   <div id="otaProgress"></div>
+  <hr>
+  <button class="danger" onclick="showConfirm('Сбросить ВСЕ настройки?', resetDevice)">Сброс всех настроек</button>
+  <button class="danger" onclick="showConfirm('Перезагрузить устройство?', rebootDevice)">Перезагрузка</button>
 </div>
 
 <div id="log" class="tabcontent">
-  <h2>Логи</h2>
+  <h2>Системный лог</h2>
   <textarea id="logArea" readonly></textarea>
-  <button onclick="refreshLog()">Обновить</button>
-  <button onclick="clearLog()">Очистить</button>
+  <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">
+    <button onclick="refreshLog()">Обновить</button>
+    <button onclick="clearLog()">Очистить</button>
+    <a href="/log" download="gate.log"><button>Скачать</button></a>
+  </div>
+  <label>Уровень: 
+    <select id="loglevel" onchange="setLevel()">
+      <option value="0">DEBUG</option>
+      <option value="1" selected>INFO</option>
+      <option value="2">WARN</option>
+      <option value="3">ERROR</option>
+    </select>
+  </label>
 </div>
 
 <div id="test" class="tabcontent">
-  <h2>Тестирование</h2>
+  <h2>Тестирование оборудования</h2>
+  <p>Внимание: двигатель и концевики могут быть отключены. Команды игнорируют концевые выключатели.</p>
+  <div class="test-status" id="testFCA"></div>
+  <div class="test-status" id="testFCC"></div>
   <button class="open" onclick="testCommand('/testopen')">Тест ОТКРЫТЬ</button>
   <button class="stop" onclick="testCommand('/teststop')">Стоп</button>
   <button class="close" onclick="testCommand('/testclose')">Тест ЗАКРЫТЬ</button>
+  
+  <h3>Проверка концевиков</h3>
+  <p>Замкните перемычкой GND и соответствующий пин (D7 - Открыто, D6 - Закрыто).</p>
+  <button onclick="window.open('/testwaitfca','_blank')">Инструкция FCA</button>
+  <button onclick="window.open('/testwaitfcc','_blank')">Инструкция FCC</button>
+  <div>
+    FCA сейчас: <span id="curFCA">-</span> | FCC сейчас: <span id="curFCC">-</span>
+    <button onclick="refreshEnds()">Обновить</button>
+  </div>
 </div>
 
-<div id="motor" class="tabcontent">
-  <h2>Настройки двигателя</h2>
-  <h3>Датчик тока</h3>
-  <label>Тип датчика:</label>
-  <select id="sensorType" onchange="saveSensorType()">
-    <option value="0">5A</option>
-    <option value="1">20A</option>
-    <option value="2">30A</option>
-  </select>
-  <button onclick="recalibrate()">Перекалибровать</button>
-  <h3>Порог препятствия</h3>
-  <input type="number" id="thresholdInput" step="0.1" value="6.0">
-  <button onclick="saveThreshold()">Сохранить порог</button>
-  <button onclick="startCalibration()">Автокалибровка порога</button>
-  <div id="calibrationStatus"></div>
+<div id="htmlupdate" class="tabcontent">
+  <h2>Обновление HTML интерфейса</h2>
+  <p>Выберите новый файл index.html для загрузки. После успешной загрузки страница автоматически перезагрузится.</p>
+  <input type="file" id="htmlFileInput" accept=".html">
+  <button onclick="uploadHTML()">Загрузить HTML</button>
+  <div id="htmlUploadStatus"></div>
+</div>
+
+<!-- Wi-Fi Modal -->
+<div id="wifiModal" class="modal">
+  <div class="modal-content">
+    <h3>Подключение к Wi-Fi</h3>
+    <div id="scanStatus" style="margin-bottom:10px"></div>
+    <div class="wifi-form">
+      <input type="text" id="ssidInput" placeholder="SSID сети" list="ssidList">
+      <datalist id="ssidList"></datalist>
+      <input type="text" id="passInput" placeholder="Пароль">
+      <button id="connectBtn" onclick="startConnect()">Подключиться</button>
+      <button class="danger" onclick="closeWifiModal()">Отмена</button>
+    </div>
+    <div id="connectStatus" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<!-- Confirm Modal -->
+<div id="confirmModal" class="modal">
+  <div class="modal-content">
+    <p id="confirmText"></p>
+    <div class="modal-buttons">
+      <button id="confirmYes">Да</button>
+      <button class="danger" onclick="closeConfirm()">Нет</button>
+    </div>
+  </div>
 </div>
 
 <script>
-// Общие функции (openTab, updateInfo, updateStatus, sendCommand, fillTab, scanNetworks, saveMQTT, saveTLS, saveBLE, refreshDevices, uploadFirmware, refreshLog, clearLog, testCommand) — аналогичны предыдущим версиям, но дополнены для новых полей.
-
+// === Общие функции ===
 function openTab(evt, tabName) {
   document.querySelectorAll('.tabcontent').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('active'));
   document.getElementById(tabName).classList.add('active');
   evt.currentTarget.classList.add('active');
   if (tabName === 'log') refreshLog();
-  else if (tabName === 'motor') fillMotorTab();
+  else if (tabName === 'test') refreshEnds();
+  else fillTab(tabName);
 }
 
 function updateInfo() {
@@ -151,9 +213,15 @@ function updateInfo() {
     document.getElementById('ip').innerText = d.ip || '--';
     document.getElementById('host').innerText = d.hostname || 'gatecontroller.local';
     document.getElementById('ver').innerText = d.version || '';
-    if (d.tls_available) document.getElementById('tabTLS').style.display='inline-block';
-    else document.getElementById('tabTLS').style.display='none';
+    if (d.tls_available) {
+      document.getElementById('tabTLS').style.display = 'inline-block';
+    } else {
+      document.getElementById('tabTLS').style.display = 'none';
+    }
     window._info = d;
+    fetch('/getloglevel').then(r=>r.text()).then(lvl=>{
+      document.getElementById('loglevel').value = lvl;
+    });
   }).catch(()=>{});
 }
 setInterval(updateInfo, 5000);
@@ -163,7 +231,9 @@ function updateStatus() {
   fetch('/status').then(r=>r.json()).then(d=>{
     document.getElementById('state').innerText = d.state || '-';
     document.getElementById('current').innerText = d.current ? d.current.toFixed(2) : '0.00';
-  });
+    fetch('/testfca').then(r=>r.text()).then(t=> document.getElementById('fca').innerText = t);
+    fetch('/testfcc').then(r=>r.text()).then(t=> document.getElementById('fcc').innerText = t);
+  }).catch(()=>{});
 }
 setInterval(updateStatus, 2000);
 updateStatus();
@@ -171,70 +241,328 @@ updateStatus();
 function sendCommand(ev, url) {
   let btn = ev.target;
   btn.disabled = true;
-  fetch(url).then(r=>r.text()).finally(()=>{ btn.disabled = false; });
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  fetch(url).then(r=>r.text()).finally(()=>{
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  });
 }
 
-function fillMotorTab() {
+function fillTab(tab) {
   const d = window._info;
-  if (d) {
-    document.getElementById('sensorType').value = d.sensor_type;
-    document.getElementById('thresholdInput').value = d.current_threshold;
+  if (!d) return;
+  if (tab === 'mqtt') {
+    document.getElementById('mqtt_server').value = d.mqtt_server || '';
+    document.getElementById('mqtt_port').value = d.mqtt_port || 1883;
+    document.getElementById('mqtt_user').value = d.mqtt_user || '';
+    document.getElementById('mqtt_topic').value = d.mqtt_topic || 'gate';
+    document.getElementById('mqtt_retain').checked = !!d.mqtt_retain;
+  } else if (tab === 'ble') {
+    document.getElementById('ble_enabled').checked = d.ble_enabled === true;
+    document.getElementById('ble_mode').value = (d.ble_mode === 'HID') ? '1' : '0';
   }
 }
 
-function saveSensorType() {
-  fetch('/set_current_sensor_type', {
-    method:'POST',
-    headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'type='+document.getElementById('sensorType').value
-  }).then(r=>r.text()).then(()=>updateInfo());
-}
-
-function recalibrate() {
-  fetch('/recalibrate_current').then(r=>r.text()).then(()=>alert('Калибровка выполнена'));
-}
-
-function saveThreshold() {
-  fetch('/set_threshold', {
-    method:'POST',
-    headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'value='+document.getElementById('thresholdInput').value
-  }).then(r=>r.text()).then(()=>alert('Порог сохранён'));
-}
-
-let calibInterval = null;
-function startCalibration() {
-  fetch('/calibration/start').then(r=>r.text()).then(()=>{
-    document.getElementById('calibrationStatus').innerHTML = 'Калибровка начата. Выполняйте инструкции.';
-    calibInterval = setInterval(updateCalibrationStatus, 1000);
+// === Wi-Fi ===
+function scanNetworks() {
+  let btn = document.getElementById('scanBtn');
+  btn.disabled = true;
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  fetch('/scan').then(r=>r.json()).then(nets=>{
+    let html = '';
+    nets.forEach(n=>{
+      let icon = n.encryption=='OPEN'?'🔓':'🔒';
+      let strength = n.rssi>-50?'отличный':n.rssi>-70?'средний':'слабый';
+      html += `<div class="network-item" onclick="openWifiModal('${n.ssid}')">${icon} ${n.ssid} <small>(${n.rssi} dBm, ${strength})</small></div>`;
+    });
+    document.getElementById('networks').innerHTML = html || 'Сети не найдены';
+  }).finally(()=>{
+    btn.disabled = false;
+    btn.innerHTML = orig;
   });
 }
 
-function finishStep() {
-  fetch('/calibration/finish_step').then(r=>r.text()).then(()=>{
-    updateCalibrationStatus();
+function openWifiModal(presetSSID = '') {
+  document.getElementById('wifiModal').style.display = 'block';
+  document.getElementById('scanStatus').innerHTML = 'Загрузка списка сетей... <span class="loader"></span>';
+  document.getElementById('connectBtn').disabled = true;
+  fetch('/scan').then(r=>r.json()).then(nets=>{
+    let datalist = document.getElementById('ssidList');
+    datalist.innerHTML = '';
+    nets.forEach(n=>{
+      let opt = document.createElement('option');
+      opt.value = n.ssid;
+      datalist.appendChild(opt);
+    });
+    document.getElementById('scanStatus').innerHTML = 'Список сетей загружен';
+    document.getElementById('connectBtn').disabled = false;
+  }).catch(()=>{
+    document.getElementById('scanStatus').innerHTML = 'Ошибка загрузки';
+    document.getElementById('connectBtn').disabled = false;
   });
+  document.getElementById('ssidInput').value = presetSSID;
+  document.getElementById('passInput').value = '';
+  document.getElementById('connectStatus').innerHTML = '';
+  document.getElementById('connectBtn').innerHTML = 'Подключиться';
 }
 
-function updateCalibrationStatus() {
-  fetch('/calibration/status').then(r=>r.json()).then(d=>{
-    if (d.step === 0) {
-      clearInterval(calibInterval);
-      document.getElementById('calibrationStatus').innerHTML = '<b>Калибровка завершена!</b> Порог установлен: ' + d.threshold + ' А';
-      updateInfo();
-    } else {
-      let instruction = '';
-      switch(d.step) {
-        case 1: instruction = 'Запустите двигатель (кнопка ОТКРЫТЬ), дайте поработать 5 секунд без препятствий, затем нажмите СТОП и кнопку "Завершить шаг".'; break;
-        case 2: instruction = 'Запустите двигатель до полного открытия (концевик откроет), дождитесь остановки, затем нажмите "Завершить шаг".'; break;
-        case 3: instruction = 'Запустите двигатель до полного закрытия (концевик закроет), дождитесь остановки, затем нажмите "Завершить шаг".'; break;
-        case 4: instruction = 'Запустите двигатель и физически застопорьте ворота (препятствие), дождитесь остановки (или сами нажмите СТОП), затем нажмите "Завершить шаг".'; break;
+function closeWifiModal() {
+  document.getElementById('wifiModal').style.display = 'none';
+}
+
+async function startConnect() {
+  let ssid = document.getElementById('ssidInput').value.trim();
+  let pass = document.getElementById('passInput').value;
+  if (!ssid) return;
+  
+  let btn = document.getElementById('connectBtn');
+  btn.disabled = true;
+  btn.innerHTML = 'Подключение... <span class="loader"></span>';
+  
+  let formData = new FormData();
+  formData.append('ssid', ssid);
+  formData.append('password', pass);
+  
+  try {
+    let resp = await fetch('/connect', {method:'POST', body: formData});
+    let result = await resp.json();
+    if (result.status !== 'started') throw new Error('Not started');
+    
+    let interval = setInterval(async () => {
+      let s = await fetch('/connect_status');
+      let status = await s.json();
+      if (status.status === 'connected') {
+        clearInterval(interval);
+        document.getElementById('connectStatus').innerHTML = 
+          `<p style="color:#4CAF50">Подключено! IP: ${status.ip}</p>`;
+        setTimeout(() => { window.location.href = 'http://' + status.ip + '/'; }, 3000);
+      } else if (status.status === 'failed') {
+        clearInterval(interval);
+        document.getElementById('connectStatus').innerHTML = 
+          '<p style="color:#f44336">Ошибка подключения</p>';
+        btn.disabled = false;
+        btn.innerHTML = 'Подключиться';
       }
-      document.getElementById('calibrationStatus').innerHTML = '<b>Шаг ' + d.step + ':</b> ' + instruction +
-        '<br><small>Измеренные значения: ' + d.values.map(v=>v.toFixed(2)).join(', ') + '</small>' +
-        '<br><button onclick="finishStep()">Завершить шаг</button>';
-    }
+    }, 1000);
+  } catch (e) {
+    document.getElementById('connectStatus').innerHTML = '<p style="color:#f44336">Ошибка запроса</p>';
+    btn.disabled = false;
+    btn.innerHTML = 'Подключиться';
+  }
+}
+
+// === MQTT ===
+function saveMQTT(ev) {
+  let btn = ev.target;
+  btn.disabled = true;
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  
+  let formData = new FormData();
+  formData.append('mqtt_server', document.getElementById('mqtt_server').value);
+  formData.append('mqtt_port', document.getElementById('mqtt_port').value);
+  formData.append('mqtt_user', document.getElementById('mqtt_user').value);
+  formData.append('mqtt_password', document.getElementById('mqtt_password').value);
+  formData.append('mqtt_topic', document.getElementById('mqtt_topic').value);
+  formData.append('mqtt_retain', document.getElementById('mqtt_retain').checked ? '1' : '0');
+  
+  fetch('/mqtt_save', {method:'POST', body: formData})
+    .then(r=>r.text())
+    .then(()=>{
+      btn.disabled = false;
+      btn.innerHTML = orig;
+      showConfirm('MQTT настройки сохранены', ()=>{});
+    });
+}
+
+// === TLS ===
+function saveTLS(ev) {
+  let btn = ev.target;
+  btn.disabled = true;
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  
+  let formData = new FormData();
+  formData.append('tls_enabled', document.getElementById('tls_enabled').checked ? '1' : '0');
+  formData.append('ca_cert', document.getElementById('ca_cert').value);
+  formData.append('client_cert', document.getElementById('client_cert').value);
+  formData.append('client_key', document.getElementById('client_key').value);
+  formData.append('verify_depth', document.getElementById('verify_depth').checked ? '1' : '0');
+  
+  fetch('/tls_save', {method:'POST', body: formData})
+    .then(r=>r.text())
+    .then(()=>{
+      btn.disabled = false;
+      btn.innerHTML = orig;
+      showConfirm('TLS настройки сохранены', ()=>{});
+    });
+}
+
+// === BLE ===
+function saveBLE(ev) {
+  let btn = ev.target;
+  btn.disabled = true;
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  
+  let formData = new FormData();
+  formData.append('ble_enabled', document.getElementById('ble_enabled').checked ? '1' : '0');
+  formData.append('ble_mode', document.getElementById('ble_mode').value);
+  
+  fetch('/ble_save', {method:'POST', body: formData})
+    .then(r=>r.text())
+    .then(()=>{
+      btn.disabled = false;
+      btn.innerHTML = orig;
+      showConfirm('BLE настройки сохранены', ()=>{});
+    });
+}
+
+// === Устройства ===
+function refreshDevices() {
+  fetch('/bonded_devices').then(r=>r.json()).then(devices=>{
+    let html = '';
+    devices.forEach(d=>{
+      html += `<div class="device-item">
+        <button onclick="removeDevice('${d.address}')">Удалить</button>
+        <strong>${d.name}</strong><br>
+        <small>MAC: ${d.address}</small><br>
+        <small>ПИН: ${d.pin}</small>
+      </div>`;
+    });
+    document.getElementById('deviceList').innerHTML = html || 'Нет привязанных устройств';
   });
+}
+
+function removeDevice(address) {
+  showConfirm(`Удалить устройство ${address}?`, () => {
+    fetch('/remove_device?address=' + encodeURIComponent(address))
+      .then(r=>r.text())
+      .then(()=>refreshDevices());
+  });
+}
+
+// === OTA ===
+function uploadFirmware(ev) {
+  let file = document.getElementById('firmware').files[0];
+  if (!file) {
+    showConfirm('Выберите файл прошивки', ()=>{});
+    return;
+  }
+  let btn = ev.target;
+  btn.disabled = true;
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  
+  let formData = new FormData();
+  formData.append('update', file);
+  
+  fetch('/update', {method:'POST', body: formData})
+    .then(r=>r.text())
+    .then(t=>{
+      document.getElementById('otaProgress').innerHTML = t;
+      btn.disabled = false;
+      btn.innerHTML = orig;
+    });
+}
+
+function resetDevice() {
+  fetch('/reset').then(r=>r.text()).then(()=>{
+    document.body.innerHTML = '<h2 style="text-align:center;margin-top:50px">Настройки сброшены. Перезагрузка...</h2>';
+  });
+}
+
+function rebootDevice() {
+  fetch('/reboot').then(r=>r.text()).then(()=>{
+    document.body.innerHTML = '<h2 style="text-align:center;margin-top:50px">Перезагрузка...</h2>';
+  });
+}
+
+// === Модальные окна ===
+function showConfirm(text, callback) {
+  document.getElementById('confirmText').innerText = text;
+  document.getElementById('confirmModal').style.display = 'block';
+  document.getElementById('confirmYes').onclick = function() {
+    closeConfirm();
+    if (callback) callback();
+  };
+}
+
+function closeConfirm() {
+  document.getElementById('confirmModal').style.display = 'none';
+}
+
+// === Логи ===
+function refreshLog() {
+  fetch('/log').then(r=>r.text()).then(t=>{
+    document.getElementById('logArea').value = t;
+    document.getElementById('logArea').scrollTop = document.getElementById('logArea').scrollHeight;
+  });
+}
+
+function clearLog() {
+  if (confirm('Очистить лог?')) {
+    fetch('/clearlog').then(r=>r.text()).then(t=>{
+      alert(t);
+      refreshLog();
+    });
+  }
+}
+
+function setLevel() {
+  let lvl = document.getElementById('loglevel').value;
+  fetch('/setloglevel', {
+    method:'POST',
+    headers: {'Content-Type':'application/x-www-form-urlencoded'},
+    body: 'level=' + lvl
+  }).then(r=>r.text()).then(t=>alert(t));
+}
+
+// === Тестирование ===
+function testCommand(url) {
+  let btn = event.target;
+  btn.disabled = true;
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  fetch(url).then(r=>r.text()).finally(()=>{
+    btn.disabled = false;
+    btn.innerHTML = orig;
+    refreshEnds();
+  });
+}
+
+function refreshEnds() {
+  fetch('/testfca').then(r=>r.text()).then(t=>{
+    document.getElementById('testFCA').innerText = 'FCA: ' + t;
+    document.getElementById('curFCA').innerText = t;
+  });
+  fetch('/testfcc').then(r=>r.text()).then(t=>{
+    document.getElementById('testFCC').innerText = 'FCC: ' + t;
+    document.getElementById('curFCC').innerText = t;
+  });
+}
+
+// === Обновление HTML ===
+function uploadHTML() {
+  var file = document.getElementById('htmlFileInput').files[0];
+  if (!file) {
+    alert('Выберите файл');
+    return;
+  }
+  var formData = new FormData();
+  formData.append('file', file);
+  document.getElementById('htmlUploadStatus').innerHTML = 'Загрузка...';
+  fetch('/uploadhtml', {method:'POST', body: formData})
+    .then(r => r.text())
+    .then(t => {
+      document.getElementById('htmlUploadStatus').innerHTML = 'HTML обновлён. Перезагружаем...';
+      setTimeout(() => location.reload(), 1000);
+    })
+    .catch(e => {
+      document.getElementById('htmlUploadStatus').innerHTML = 'Ошибка: ' + e;
+    });
 }
 </script>
 </body>

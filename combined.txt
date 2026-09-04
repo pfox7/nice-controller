@@ -1,0 +1,2735 @@
+=== motor_control.cpp ===
+#include "motor_control.h"
+#include "utils.h"
+#include "current_sensor.h"
+
+State currentState = IDLE;
+unsigned long moveStartTime = 0;
+bool testMode = false;
+
+void motorSetup() {
+  pinMode(SSR_MAIN_PIN, OUTPUT);
+  pinMode(RELAY_CAP_PIN, OUTPUT);
+  pinMode(START_RELAY_PIN, OUTPUT);
+  pinMode(FCA_PIN, INPUT_PULLUP);
+  pinMode(FCC_PIN, INPUT_PULLUP);
+  pinMode(LED_PIN, OUTPUT);
+
+  digitalWrite(SSR_MAIN_PIN, SSR_OFF);
+  digitalWrite(RELAY_CAP_PIN, RELAY_OFF);
+  digitalWrite(START_RELAY_PIN, RELAY_OFF);
+  digitalWrite(LED_PIN, LOW);
+  logMessage("Двигатель: инициализирован (1 SSR + 2 реле)");
+}
+
+void startForward() {
+  testMode = false;
+  if (digitalRead(FCA_PIN) == HIGH && currentState == IDLE) {
+    logMessage("Двигатель: уже открыто, ОТКРЫТЬ заблокирован");
+    return;
+  }
+  stopMotor();
+  delay(50);
+  digitalWrite(SSR_MAIN_PIN, SSR_ON);
+  digitalWrite(RELAY_CAP_PIN, RELAY_OFF);   // ИЗМЕНЕНО: конденсатор к B (для открытия)
+  currentState = MOVING_FORWARD;
+  moveStartTime = millis();
+  digitalWrite(LED_PIN, HIGH);
+  logMessage("Двигатель: ОТКРЫТЬ");
+}
+
+void startReverse() {
+  testMode = false;
+  if (digitalRead(FCC_PIN) == HIGH && currentState == IDLE) {
+    logMessage("Двигатель: уже закрыто, ЗАКРЫТЬ заблокирован");
+    return;
+  }
+  stopMotor();
+  delay(50);
+  digitalWrite(SSR_MAIN_PIN, SSR_ON);
+  digitalWrite(RELAY_CAP_PIN, RELAY_ON);    // ИЗМЕНЕНО: конденсатор к A (для закрытия)
+  currentState = MOVING_REVERSE;
+  moveStartTime = millis();
+  digitalWrite(LED_PIN, HIGH);
+  logMessage("Двигатель: ЗАКРЫТЬ");
+}
+
+void stopMotor() {
+  testMode = false;
+  digitalWrite(SSR_MAIN_PIN, SSR_OFF);
+  digitalWrite(RELAY_CAP_PIN, RELAY_OFF);
+  digitalWrite(START_RELAY_PIN, RELAY_OFF);
+  currentState = IDLE;
+  digitalWrite(LED_PIN, LOW);
+  logMessage("Двигатель: СТОП");
+}
+
+String getStatusString() {
+  switch (currentState) {
+    case IDLE:              return "СТОП";
+    case MOVING_FORWARD:    return "ОТКРЫТЬ";
+    case MOVING_REVERSE:    return "ЗАКРЫТЬ";
+    case OBSTACLE_BACKWARD: return "ОТКАТ";
+    default:                return "НЕИЗВЕСТНО";
+  }
+}
+
+String getPositionString() {
+  bool fca = digitalRead(FCA_PIN);
+  bool fcc = digitalRead(FCC_PIN);
+  if (fca == HIGH && fcc == LOW) return "OPEN";
+  if (fca == LOW && fcc == HIGH) return "CLOSED";
+  return "MIDDLE";
+}
+
+void handleObstacle(String direction) {
+  logMessage("Двигатель: обнаружено препятствие при движении " + direction);
+  stopMotor();
+  delay(300);
+  if (direction == "FORWARD") startReverse();
+  else startForward();
+  currentState = OBSTACLE_BACKWARD;
+  moveStartTime = millis();
+}
+
+void testForward() {
+  testMode = true;
+  stopMotor();
+  delay(50);
+  digitalWrite(SSR_MAIN_PIN, SSR_ON);
+  digitalWrite(RELAY_CAP_PIN, RELAY_OFF);
+  currentState = MOVING_FORWARD;
+  moveStartTime = millis();
+  digitalWrite(LED_PIN, HIGH);
+  logMessage("Тест: ОТКРЫТЬ (концевики игнорируются)");
+}
+
+void testReverse() {
+  testMode = true;
+  stopMotor();
+  delay(50);
+  digitalWrite(SSR_MAIN_PIN, SSR_ON);
+  digitalWrite(RELAY_CAP_PIN, RELAY_ON);
+  currentState = MOVING_REVERSE;
+  moveStartTime = millis();
+  digitalWrite(LED_PIN, HIGH);
+  logMessage("Тест: ЗАКРЫТЬ (концевики игнорируются)");
+}
+
+void testStop() {
+  testMode = false;
+  stopMotor();
+  logMessage("Тест: СТОП");
+}
+
+bool readFCA() { return digitalRead(FCA_PIN); }
+bool readFCC() { return digitalRead(FCC_PIN); }
+
+void handleStartRelay() {
+  static bool startRelayActive = false;
+  static unsigned long startTime = 0;
+  static bool startDone = false;
+
+  if (currentState == MOVING_FORWARD || currentState == MOVING_REVERSE) {
+    if (!startRelayActive && !startDone) {
+      digitalWrite(START_RELAY_PIN, RELAY_ON);
+      startRelayActive = true;
+      startTime = millis();
+      logMessage("Пусковой конденсатор: ВКЛ");
+    } else if (startRelayActive) {
+      float current = readCurrent();
+      if ((current < START_CURRENT_THRESH) && (millis() - startTime > 1000)) {
+        digitalWrite(START_RELAY_PIN, RELAY_OFF);
+        startRelayActive = false;
+        startDone = true;
+        logMessage("Пусковой конденсатор: ОТКЛ (ток упал)");
+      } else if (millis() - startTime > START_MAX_TIME) {
+        digitalWrite(START_RELAY_PIN, RELAY_OFF);
+        startRelayActive = false;
+        startDone = true;
+        logMessage("Пусковой конденсатор: ОТКЛ (таймаут)");
+      }
+    }
+  } else {
+    digitalWrite(START_RELAY_PIN, RELAY_OFF);
+    startRelayActive = false;
+    startDone = false;
+  }
+}
+=== motor_control.h ===
+#ifndef MOTOR_CONTROL_H
+#define MOTOR_CONTROL_H
+
+#include "config.h"
+#include <Arduino.h>
+
+enum State { IDLE, MOVING_FORWARD, MOVING_REVERSE, OBSTACLE_BACKWARD };
+
+extern State currentState;
+extern unsigned long moveStartTime;
+extern bool testMode;
+
+void motorSetup();
+void startForward();
+void startReverse();
+void stopMotor();
+String getStatusString();
+String getPositionString();
+void handleObstacle(String direction);
+
+void testForward();
+void testReverse();
+void testStop();
+bool readFCA();
+bool readFCC();
+
+void handleStartRelay();
+
+#endif
+=== utils.h ===
+#ifndef UTILS_H
+#define UTILS_H
+
+#include <Arduino.h>
+#include "logger.h"
+
+void blinkLED(int times);
+void logMessage(const String &msg);
+void logMessage(LogLevel level, const String &msg);
+String getFormattedTime();
+
+#endif
+=== utils.cpp ===
+#include "utils.h"
+#include "config.h"
+#include "time_manager.h"
+
+void blinkLED(int times) {
+  for (int i = 0; i < times; i++) {
+    digitalWrite(LED_PIN, HIGH);
+    delay(200);
+    digitalWrite(LED_PIN, LOW);
+    delay(200);
+  }
+}
+
+void logMessage(const String &msg) {
+  String line = TimeManager::getFormattedTime() + " | " + msg;
+  Serial.println(line);
+  logWrite(LOG_INFO, line);
+}
+
+void logMessage(LogLevel level, const String &msg) {
+  String line = TimeManager::getFormattedTime() + " | " + msg;
+  Serial.println(line);
+  logWrite(level, line);
+}
+
+String getFormattedTime() {
+  return TimeManager::getFormattedTime();
+}
+=== wifi_manager.h ===
+#ifndef WIFI_MANAGER_H
+#define WIFI_MANAGER_H
+
+#include "config.h"
+#include "settings.h"
+#include <WiFi.h>
+#include <DNSServer.h>
+
+extern bool apMode;
+extern unsigned long wifiStartTime;
+extern DNSServer dnsServer;
+extern char deviceId[13];
+extern bool needRestart;
+extern unsigned long lastReconnectAttempt;
+
+void generateDeviceId();
+String getDeviceId();
+String getApSSID();
+String scanWiFiNetworks();
+void initWiFi();
+void startWiFiConnect(const char* ssid, const char* pass);
+void updateWiFiConnect();
+String getWiFiConnectStatus();
+void tryReconnectSta();
+void updateStaReconnect();
+void handleWiFiTimeout();
+
+#endif
+=== current_sensor.h ===
+#ifndef CURRENT_SENSOR_H
+#define CURRENT_SENSOR_H
+
+#include "config.h"
+#include <Arduino.h>
+
+void currentSensorSetup();
+float readCurrent();
+
+#endif
+=== ble_handler.h ===
+#ifndef BLE_HANDLER_H
+#define BLE_HANDLER_H
+
+#include "config.h"
+#include "settings.h"
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
+#include <BLE2902.h>
+
+extern bool bleDeviceConnected;
+
+void initBLE();
+void stopBLE();
+void handleBLE();
+
+#endif
+=== config.h ===
+#ifndef CONFIG_H
+#define CONFIG_H
+
+#include <Arduino.h>
+
+// ============ ВЕРСИЯ ============
+#define FIRMWARE_VERSION "2.5"   // Исправление датчика тока и защиты
+
+// ============ ПИНЫ ============
+#define SSR_MAIN_PIN      25   // D3 — фаза на двигатель
+#define RELAY_CAP_PIN     16   // D5 — рабочий конденсатор
+#define START_RELAY_PIN   13   // D9 — пусковой конденсатор
+
+#define FCA_PIN           14   // D7
+#define FCC_PIN           27   // D6
+#define CURRENT_PIN       34   // A4
+#define LED_PIN           2
+
+// Логика
+#define SSR_ON            HIGH
+#define SSR_OFF           LOW
+#define RELAY_ON          LOW
+#define RELAY_OFF         HIGH
+
+// Параметры
+#define DEFAULT_THRESHOLD 6.0f
+#define START_DELAY_MS    300    // защита по току включается через 300 мс
+#define OBSTACLE_BACK_MS  1500
+#define MAX_RUN_TIME_MS   30000
+#define START_CURRENT_THRESH 2.0f
+#define START_MAX_TIME    3000
+
+// Wi-Fi
+#define AP_SSID_PREFIX    "Gate_"
+#define AP_PASSWORD       "12345678"
+#define WIFI_CONNECT_ATTEMPTS 20
+
+// MQTT
+#define MQTT_RECONNECT_INTERVAL 15000
+#define MQTT_KEEPALIVE    60
+#define MQTT_STATUS_INTERVAL 60000
+#define MQTT_CURRENT_INTERVAL 10000
+
+// EEPROM
+#define EEPROM_SIZE       512
+#define SIGNATURE_ADDR    0
+#define SETTINGS_ADDR     4
+
+// BLE
+#ifndef SKIP_BLE
+#define BLE_SERVICE_UUID            "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define BLE_CHARACTERISTIC_UUID_RX  "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define BLE_CHARACTERISTIC_UUID_TX  "beb5483e-36e1-4688-b7f5-ea07361b26a9"
+#define BLE_CHARACTERISTIC_UUID_AUTH "beb5483e-36e1-4688-b7f5-ea07361b26aa"
+#define MAX_BONDED_DEVICES          10
+#define PIN_CODE_LENGTH             6
+#endif
+
+#endif
+=== settings.h ===
+#ifndef SETTINGS_H
+#define SETTINGS_H
+
+#include "config.h"
+#include <Preferences.h>
+#include <EEPROM.h>
+
+struct BondedDevice {
+  char address[18];
+  char name[33];
+  char pin[PIN_CODE_LENGTH + 1];
+  bool active;
+};
+
+struct Settings {
+  char sta_ssid[33];
+  char sta_password[65];
+  char mqtt_server[65];
+  uint16_t mqtt_port;
+  char mqtt_user[33];
+  char mqtt_password[33];
+  char mqtt_topic[65];
+  char device_name[33];
+  uint8_t wifi_timeout;
+  float current_threshold;
+  bool mqtt_tls_enabled;
+  bool mqtt_verify_depth;
+  bool ca_cert_present;
+  bool client_cert_present;
+  bool client_key_present;
+  bool ble_enabled;
+  bool ble_hid_mode;
+  bool mqtt_retain;
+  int8_t timezone;
+};
+
+extern Settings settings;
+extern BondedDevice bondedDevices[MAX_BONDED_DEVICES];
+extern int bondedCount;
+
+void initSettings();
+void resetSettings();
+void saveSettings();
+bool validateSettings();
+void loadBondedDevices();
+void saveBondedDevices();
+int findBondedDevice(String address);
+int addBondedDevice(String address, String name, String pin);
+bool removeBondedDevice(String address);
+String generatePin();
+
+#endif
+=== time_manager.cpp ===
+#include "time_manager.h"
+#include <WiFi.h>
+
+static int8_t currentTimezone = 3;
+static bool ntpSynced = false;
+static time_t baseTime = 0;
+
+void TimeManager::begin() {
+  struct tm tm = {};
+  tm.tm_year = 2026 - 1900;
+  tm.tm_mon = 6;
+  tm.tm_mday = 17;
+  tm.tm_hour = 0;
+  tm.tm_min = 0;
+  tm.tm_sec = 0;
+  baseTime = mktime(&tm) - currentTimezone * 3600;
+  if (WiFi.status() == WL_CONNECTED) {
+    syncNTP();
+  }
+}
+
+void TimeManager::setTimezone(int8_t tz) {
+  if (tz >= -12 && tz <= 12) {
+    currentTimezone = tz;
+    if (!ntpSynced) {
+      struct tm tm = {};
+      tm.tm_year = 2026 - 1900;
+      tm.tm_mon = 6;
+      tm.tm_mday = 17;
+      tm.tm_hour = 0;
+      tm.tm_min = 0;
+      tm.tm_sec = 0;
+      baseTime = mktime(&tm) - currentTimezone * 3600;
+    }
+  }
+}
+
+int8_t TimeManager::getTimezone() {
+  return currentTimezone;
+}
+
+String TimeManager::getFormattedTime() {
+  time_t now;
+  if (ntpSynced) {
+    time(&now);
+  } else {
+    now = baseTime + (millis() / 1000);
+  }
+  struct tm *tm = localtime(&now);
+  char buf[20];
+  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm);
+  return String(buf);
+}
+
+void TimeManager::syncNTP() {
+  configTime(currentTimezone * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  struct tm timeinfo;
+  if (getLocalTime(&timeinfo, 5000)) {
+    ntpSynced = true;
+  }
+}
+=== time_manager.h ===
+#ifndef TIME_MANAGER_H
+#define TIME_MANAGER_H
+
+#include <Arduino.h>
+#include <time.h>
+
+class TimeManager {
+public:
+  static void begin();
+  static void setTimezone(int8_t tz);
+  static int8_t getTimezone();
+  static String getFormattedTime();
+  static void syncNTP();
+};
+
+#endif
+=== current_sensor.cpp ===
+#include "current_sensor.h"
+#include "utils.h"
+
+static float vref = 2.50;
+
+void currentSensorSetup() {
+  analogReadResolution(12);
+  analogSetAttenuation(ADC_11db);
+  pinMode(CURRENT_PIN, INPUT);
+
+  // Ждём, чтобы двигатель гарантированно был остановлен
+  delay(500);
+
+  // Калибровка: усреднение 500 измерений для точности
+  long sum = 0;
+  const int samples = 500;
+  for (int i = 0; i < samples; i++) {
+    sum += analogRead(CURRENT_PIN);
+    delayMicroseconds(200);
+  }
+  float avgRaw = (float)sum / samples;
+  vref = avgRaw * (3.3f / 4095.0f);
+
+  logMessage("Датчик тока: калибровка, Vref=" + String(vref, 3) + " В");
+  Serial.printf("Отладочное Vref: %.3f В\n", vref);
+}
+
+float readCurrent() {
+  // Медианный фильтр: берём 101 измерение, отбрасываем крайние
+  const int samples = 101;
+  int raw[samples];
+  long sum = 0;
+  for (int i = 0; i < samples; i++) {
+    raw[i] = analogRead(CURRENT_PIN);
+    delayMicroseconds(100);
+  }
+
+  // Сортировка для медианы
+  for (int i = 0; i < samples - 1; i++) {
+    for (int j = i + 1; j < samples; j++) {
+      if (raw[i] > raw[j]) {
+        int tmp = raw[i];
+        raw[i] = raw[j];
+        raw[j] = tmp;
+      }
+    }
+  }
+
+  // Берём среднее из середины (от 25 до 75)
+  for (int i = 25; i < 75; i++) {
+    sum += raw[i];
+  }
+  float avgRaw = (float)sum / 50;
+  float voltage = avgRaw * (3.3f / 4095.0f);
+  float current = (voltage - vref) / 0.185f;  // ACS712-5A
+
+  Serial.printf("Raw avg=%d, V=%.3f, I=%.2f A\n", (int)avgRaw, voltage, current);
+
+  return abs(current);
+}
+=== wifi_manager.cpp ===
+#include "wifi_manager.h"
+#include "utils.h"
+#include "time_manager.h"
+#include "motor_control.h"   // для проверки состояния двигателя
+#include <vector>
+#include <algorithm>
+#include <esp_wifi.h>
+
+bool apMode = true;
+unsigned long wifiStartTime = 0;
+DNSServer dnsServer;
+char deviceId[13];
+
+static bool connectInProgress = false;
+static String connectSSID, connectPass;
+static unsigned long connectTimeout = 0;
+static String connectStatus = "idle";
+static String connectIP = "";
+static int connectAttempts = 0;
+static const int MAX_ATTEMPTS = 3;
+
+bool needRestart = false;
+unsigned long lastReconnectAttempt = 0;
+static bool staReconnectInProgress = false;
+static unsigned long staReconnectStart = 0;
+static const unsigned long STA_RECONNECT_INTERVAL = 60000; // 60 сек
+
+// Обработчик событий Wi-Fi
+void WiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_START:
+      logMessage(LOG_DEBUG, "WiFi Event: STA запущен");
+      break;
+    case ARDUINO_EVENT_WIFI_STA_STOP:
+      logMessage(LOG_DEBUG, "WiFi Event: STA остановлен");
+      break;
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      logMessage(LOG_INFO, "WiFi Event: подключен к точке доступа, канал " + String(info.wifi_sta_connected.channel) +
+                 ", BSSID: " + String(info.wifi_sta_connected.bssid[0], HEX) + ":" + String(info.wifi_sta_connected.bssid[1], HEX) + "...");
+      break;
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      logMessage(LOG_WARN, "WiFi Event: отключен от точки доступа, причина " + String(info.wifi_sta_disconnected.reason));
+      // Принудительно переподключаемся, если не в процессе движения
+      if (currentState == IDLE && !connectInProgress && !staReconnectInProgress) {
+        WiFi.disconnect(false);
+        delay(100);
+        WiFi.mode(WIFI_AP_STA);
+        WiFi.begin(settings.sta_ssid, settings.sta_password);
+        staReconnectInProgress = true;
+        staReconnectStart = millis();
+        logMessage("Wi-Fi: принудительное переподключение после отключения");
+      }
+      break;
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      logMessage(LOG_INFO, "WiFi Event: получен IP " + IPAddress(info.got_ip.ip_info.ip.addr).toString() +
+                 ", маска " + IPAddress(info.got_ip.ip_info.netmask.addr).toString() +
+                 ", шлюз " + IPAddress(info.got_ip.ip_info.gw.addr).toString());
+      break;
+    case ARDUINO_EVENT_WIFI_STA_LOST_IP:
+      logMessage(LOG_WARN, "WiFi Event: IP адрес потерян");
+      break;
+    case ARDUINO_EVENT_WIFI_AP_START:
+      logMessage(LOG_INFO, "WiFi Event: точка доступа запущена");
+      break;
+    case ARDUINO_EVENT_WIFI_AP_STOP:
+      logMessage(LOG_INFO, "WiFi Event: точка доступа остановлена");
+      break;
+    case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+      logMessage(LOG_INFO, "WiFi Event: клиент подключился к AP");
+      break;
+    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+      logMessage(LOG_INFO, "WiFi Event: клиент отключился от AP");
+      break;
+    default:
+      break;
+  }
+}
+
+void generateDeviceId() {
+  uint64_t chipId = ESP.getEfuseMac();
+  snprintf(deviceId, 13, "%04X%08X", (uint16_t)(chipId >> 32), (uint32_t)chipId);
+  logMessage(LOG_INFO, "Device ID: " + String(deviceId));
+}
+
+String getDeviceId() { return String(deviceId); }
+String getApSSID() { return String(AP_SSID_PREFIX) + deviceId; }
+
+String scanWiFiNetworks() {
+  logMessage(LOG_DEBUG, "Wi-Fi: сканирование сетей...");
+  int n = WiFi.scanNetworks();
+  String json = "[";
+  struct WiFiNetwork { String ssid; int rssi; String encryption; };
+  std::vector<WiFiNetwork> networks;
+  for (int i = 0; i < n; i++) {
+    networks.push_back({WiFi.SSID(i), WiFi.RSSI(i), 
+      WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "OPEN" : "SECURED"});
+  }
+  std::sort(networks.begin(), networks.end(), [](WiFiNetwork a, WiFiNetwork b) {
+    return a.rssi > b.rssi;
+  });
+  bool first = true;
+  String lastSsid = "";
+  for (size_t i = 0; i < networks.size(); i++) {
+    if (networks[i].ssid == lastSsid) continue;
+    lastSsid = networks[i].ssid;
+    if (!first) json += ",";
+    json += "{\"ssid\":\"" + networks[i].ssid + "\",";
+    json += "\"rssi\":" + String(networks[i].rssi) + ",";
+    json += "\"encryption\":\"" + networks[i].encryption + "\"}";
+    first = false;
+  }
+  json += "]";
+  WiFi.scanDelete();
+  logMessage(LOG_DEBUG, "Wi-Fi: найдено " + String(n) + " сетей");
+  return json;
+}
+
+void initWiFi() {
+  generateDeviceId();
+  
+  WiFi.onEvent(WiFiEvent);
+  
+  WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false);
+  
+  if (strlen(settings.sta_ssid) > 0) {
+    apMode = false;
+    logMessage(LOG_INFO, "Wi-Fi: подключение к " + String(settings.sta_ssid));
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(settings.sta_ssid, settings.sta_password);
+    wifiStartTime = millis();
+    int attempts = WIFI_CONNECT_ATTEMPTS;
+    while (WiFi.status() != WL_CONNECTED && attempts-- > 0) {
+      delay(500);
+      Serial.print(".");
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      logMessage(LOG_INFO, "Wi-Fi: подключён! IP: " + WiFi.localIP().toString() +
+                 ", RSSI: " + String(WiFi.RSSI()) + " dBm");
+      TimeManager::syncNTP();
+    } else {
+      logMessage(LOG_WARN, "Wi-Fi: сеть не найдена, запуск точки доступа");
+      apMode = true;
+    }
+  } else {
+    logMessage(LOG_INFO, "Wi-Fi: нет сохранённой сети, запуск точки доступа");
+    apMode = true;
+  }
+  
+  if (apMode) {
+    WiFi.mode(WIFI_AP);
+    String apSsid = getApSSID();
+    WiFi.softAP(apSsid.c_str(), AP_PASSWORD);
+    dnsServer.start(53, "*", WiFi.softAPIP());
+    logMessage(LOG_INFO, "Wi-Fi: точка доступа запущена. SSID: " + apSsid);
+  }
+}
+
+void startWiFiConnect(const char* ssid, const char* pass) {
+  connectSSID = ssid;
+  connectPass = pass;
+  connectAttempts = 0;
+  connectTimeout = millis() + 60000;
+  connectStatus = "connecting";
+  connectIP = "";
+  WiFi.softAPdisconnect(true);
+  delay(100);
+  WiFi.disconnect(true);
+  delay(100);
+  WiFi.mode(WIFI_STA);
+  delay(200);
+  WiFi.begin(ssid, pass);
+  logMessage(LOG_INFO, "Асинхронное подключение к " + String(ssid) + " запущено (попыток: " + String(MAX_ATTEMPTS) + ")");
+  connectInProgress = true;
+}
+
+void updateWiFiConnect() {
+  if (!connectInProgress) return;
+  wl_status_t status = WiFi.status();
+  if (status == WL_CONNECTED) {
+    connectStatus = "connected";
+    connectIP = WiFi.localIP().toString();
+    connectInProgress = false;
+    logMessage(LOG_INFO, "Асинхронное подключение успешно, IP: " + connectIP +
+               ", RSSI: " + String(WiFi.RSSI()) + " dBm");
+    apMode = false;
+    strncpy(settings.sta_ssid, connectSSID.c_str(), sizeof(settings.sta_ssid)-1);
+    settings.sta_ssid[sizeof(settings.sta_ssid)-1] = '\0';
+    strncpy(settings.sta_password, connectPass.c_str(), sizeof(settings.sta_password)-1);
+    settings.sta_password[sizeof(settings.sta_password)-1] = '\0';
+    saveSettings();
+    needRestart = true;   // только при ручной настройке
+    TimeManager::syncNTP();
+  } else if (millis() > connectTimeout) {
+    if (++connectAttempts < MAX_ATTEMPTS) {
+      logMessage(LOG_WARN, "Попытка " + String(connectAttempts) + "/" + String(MAX_ATTEMPTS) +
+                 " не удалась (статус: " + String(status) + "), повтор через 5 сек...");
+      WiFi.disconnect(true);
+      delay(5000);
+      WiFi.begin(connectSSID.c_str(), connectPass.c_str());
+      connectTimeout = millis() + 60000;
+    } else {
+      connectStatus = "failed";
+      connectInProgress = false;
+      logMessage(LOG_ERROR, "Асинхронное подключение провалилось после " + String(MAX_ATTEMPTS) +
+                 " попыток. Статус: " + String(status));
+      WiFi.disconnect(true);
+      delay(200);
+      WiFi.mode(WIFI_AP);
+      delay(200);
+      WiFi.softAP(getApSSID().c_str(), AP_PASSWORD);
+      dnsServer.start(53, "*", WiFi.softAPIP());
+      apMode = true;
+      logMessage(LOG_INFO, "Точка доступа восстановлена");
+    }
+  }
+}
+
+String getWiFiConnectStatus() {
+  String json = "{\"status\":\"" + connectStatus + "\"";
+  if (connectStatus == "connected") {
+    json += ",\"ip\":\"" + connectIP + "\"";
+  }
+  json += "}";
+  return json;
+}
+
+void tryReconnectSta() {
+  if (!apMode || staReconnectInProgress) return;
+  if (strlen(settings.sta_ssid) == 0) return;
+  if (millis() - lastReconnectAttempt < STA_RECONNECT_INTERVAL) return;
+  lastReconnectAttempt = millis();
+  
+  logMessage(LOG_INFO, "Фоновая попытка подключения к " + String(settings.sta_ssid));
+  WiFi.disconnect(false);
+  delay(100);
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.begin(settings.sta_ssid, settings.sta_password);
+  staReconnectInProgress = true;
+  staReconnectStart = millis();
+}
+
+void updateStaReconnect() {
+  if (!staReconnectInProgress) return;
+  if (WiFi.status() == WL_CONNECTED) {
+    logMessage(LOG_INFO, "Фоновое подключение успешно, IP: " + WiFi.localIP().toString() +
+               ", RSSI: " + String(WiFi.RSSI()) + " dBm");
+    apMode = false;
+    staReconnectInProgress = false;
+    saveSettings();
+    wifiStartTime = millis();
+    TimeManager::syncNTP();
+  } else if (millis() - staReconnectStart > 30000) {
+    logMessage(LOG_WARN, "Фоновая попытка не удалась");
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(getApSSID().c_str(), AP_PASSWORD);
+    dnsServer.start(53, "*", WiFi.softAPIP());
+    staReconnectInProgress = false;
+  }
+}
+
+void handleWiFiTimeout() {
+  if (!apMode && WiFi.status() != WL_CONNECTED) {
+    if (connectInProgress || staReconnectInProgress) return;
+    
+    unsigned long elapsed = (millis() - wifiStartTime) / 60000;
+    if (elapsed >= settings.wifi_timeout) {
+      logMessage(LOG_WARN, "Wi-Fi: таймаут ожидания, пытаюсь переподключиться...");
+      WiFi.disconnect(false);
+      delay(100);
+      WiFi.mode(WIFI_AP_STA);
+      WiFi.begin(settings.sta_ssid, settings.sta_password);
+      staReconnectInProgress = true;
+      staReconnectStart = millis();
+      wifiStartTime = millis();
+    }
+  }
+}
+=== web_server.h ===
+#ifndef WEB_SERVER_H
+#define WEB_SERVER_H
+
+#include "config.h"
+#include <WebServer.h>
+
+extern WebServer server;
+
+void initWebServer();
+void handleWebServer();
+String getMinimalHTML();
+
+#endif
+=== ble_handler.cpp ===
+#include "ble_handler.h"
+#include "motor_control.h"
+
+BLEServer* pServer = nullptr;
+BLECharacteristic* pTxCharacteristic = nullptr;
+BLECharacteristic* pAuthCharacteristic = nullptr;
+bool deviceAuthenticated[MAX_BONDED_DEVICES] = {false};
+String pendingAddress = "";
+bool bleDeviceConnected = false;
+
+class AuthCallback : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* pCharacteristic) {
+    String value = pCharacteristic->getValue().c_str();
+    
+    if (value.startsWith("AUTH:")) {
+      String pin = value.substring(5);
+      int idx = findBondedDevice(pendingAddress);
+      
+      if (idx >= 0 && String(bondedDevices[idx].pin) == pin) {
+        deviceAuthenticated[idx] = true;
+        pAuthCharacteristic->setValue("OK");
+        Serial.println("BLE: устройство авторизовано: " + pendingAddress);
+      } else {
+        pAuthCharacteristic->setValue("DENIED");
+        Serial.println("BLE: авторизация не удалась: " + pendingAddress);
+      }
+      pAuthCharacteristic->notify();
+    }
+  }
+};
+
+class CommandCallback : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* pCharacteristic) {
+    String command = pCharacteristic->getValue().c_str();
+    command.trim();
+    
+    Serial.println("BLE: получена команда: " + command);
+    
+    if (command == "FORWARD" || command == "F") {
+      startForward();
+    } else if (command == "REVERSE" || command == "R") {
+      startReverse();
+    } else if (command == "STOP" || command == "S") {
+      stopMotor();
+    } else if (command == "STATUS" || command == "?") {
+      if (pTxCharacteristic != nullptr) {
+        pTxCharacteristic->setValue(getStatusString().c_str());
+        pTxCharacteristic->notify();
+      }
+    }
+  }
+};
+
+class SecureServerCallback : public BLEServerCallbacks {
+  void onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) {
+    char addr[18];
+    snprintf(addr, sizeof(addr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             param->connect.remote_bda[0], param->connect.remote_bda[1],
+             param->connect.remote_bda[2], param->connect.remote_bda[3],
+             param->connect.remote_bda[4], param->connect.remote_bda[5]);
+    
+    pendingAddress = String(addr);
+    Serial.println("BLE: подключено устройство: " + pendingAddress);
+    bleDeviceConnected = true;
+    
+    int idx = findBondedDevice(pendingAddress);
+    if (idx >= 0) {
+      deviceAuthenticated[idx] = true;
+      Serial.println("BLE: известное устройство, авторизовано автоматически");
+    } else {
+      String newPin = generatePin();
+      int newIdx = addBondedDevice(pendingAddress, "iPhone", newPin);
+      if (newIdx >= 0 && pAuthCharacteristic != nullptr) {
+        String pinMsg = "PIN:" + newPin;
+        pAuthCharacteristic->setValue(pinMsg.c_str());
+        pAuthCharacteristic->notify();
+        Serial.println("BLE: новое устройство, отправлен ПИН: " + newPin);
+      }
+    }
+  }
+  
+  void onDisconnect(BLEServer* pServer) {
+    Serial.println("BLE: устройство отключено: " + pendingAddress);
+    bleDeviceConnected = false;
+    int idx = findBondedDevice(pendingAddress);
+    if (idx >= 0) {
+      deviceAuthenticated[idx] = false;
+    }
+  }
+};
+
+void initBLE() {
+  if (!settings.ble_enabled) {
+    Serial.println("BLE: отключен в настройках");
+    return;
+  }
+  
+  Serial.print("BLE: инициализация как ");
+  Serial.println(settings.device_name);
+  
+  BLEDevice::init(settings.device_name);
+  
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new SecureServerCallback());
+  
+  BLEService* pService = pServer->createService(BLE_SERVICE_UUID);
+  
+  pAuthCharacteristic = pService->createCharacteristic(
+    BLE_CHARACTERISTIC_UUID_AUTH,
+    BLECharacteristic::PROPERTY_READ |
+    BLECharacteristic::PROPERTY_WRITE |
+    BLECharacteristic::PROPERTY_NOTIFY
+  );
+  pAuthCharacteristic->setCallbacks(new AuthCallback());
+  pAuthCharacteristic->addDescriptor(new BLE2902());
+  
+  BLECharacteristic* pCommandCharacteristic = pService->createCharacteristic(
+    BLE_CHARACTERISTIC_UUID_RX,
+    BLECharacteristic::PROPERTY_WRITE
+  );
+  pCommandCharacteristic->setCallbacks(new CommandCallback());
+  
+  pTxCharacteristic = pService->createCharacteristic(
+    BLE_CHARACTERISTIC_UUID_TX,
+    BLECharacteristic::PROPERTY_READ |
+    BLECharacteristic::PROPERTY_NOTIFY
+  );
+  pTxCharacteristic->addDescriptor(new BLE2902());
+  
+  pService->start();
+  
+  BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(BLE_SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  BLEDevice::startAdvertising();
+  
+  Serial.println("BLE: запущен, ожидание подключений...");
+}
+
+void stopBLE() {
+  if (pServer != nullptr) {
+    BLEDevice::deinit(true);
+    pServer = nullptr;
+    pTxCharacteristic = nullptr;
+    pAuthCharacteristic = nullptr;
+    Serial.println("BLE: остановлен");
+  }
+}
+
+void handleBLE() {
+  // Обработка в коллбэках
+}
+=== mqtt_handler.cpp ===
+#include "mqtt_handler.h"
+#include "motor_control.h"
+#include "wifi_manager.h"
+#include "utils.h"
+#include "time_manager.h"
+#include "current_sensor.h"
+#ifdef ENABLE_TLS
+#include <WiFiClientSecure.h>
+#endif
+#include <LittleFS.h>
+
+WiFiClient espClient;
+#ifdef ENABLE_TLS
+WiFiClientSecure* secureClient = nullptr;
+#endif
+PubSubClient* mqtt = nullptr;
+static bool useTLS = false;
+
+static unsigned long lastStatusTime = 0;
+static unsigned long lastCurrentTime = 0;
+static String lastPosition = "";
+
+static bool isMqttConfigured() {
+  return (strlen(settings.mqtt_server) > 0 && settings.mqtt_port > 0 && settings.mqtt_port <= 65535);
+}
+
+#ifdef ENABLE_TLS
+static String loadCertFromSPIFFS(const char* path) {
+  if (!LittleFS.exists(path)) return "";
+  File f = LittleFS.open(path, "r");
+  if (!f) return "";
+  String cert = f.readString();
+  f.close();
+  return cert;
+}
+#endif
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String message;
+  for (unsigned int i = 0; i < length; i++) message += (char)payload[i];
+  
+  String topicStr = String(topic);
+  String baseTopic = String(settings.mqtt_topic) + "/" + getDeviceId();
+  
+  if (topicStr == baseTopic + "/command") {
+    if (message == "FORWARD") startForward();
+    else if (message == "REVERSE") startReverse();
+    else if (message == "STOP") stopMotor();
+  } else if (topicStr == baseTopic + "/settings/threshold") {
+    settings.current_threshold = message.toFloat();
+    saveSettings();
+  } else if (topicStr == baseTopic + "/settings/reboot") {
+    ESP.restart();
+  } else if (topicStr == baseTopic + "/settings/retain") {
+    settings.mqtt_retain = (message == "1" || message == "true");
+    saveSettings();
+  } else if (topicStr == baseTopic + "/settings/timezone") {
+    settings.timezone = message.toInt();
+    TimeManager::setTimezone(settings.timezone);
+    saveSettings();
+  }
+#ifdef ENABLE_TLS
+  else if (topicStr == baseTopic + "/settings/tls/enable") {
+    settings.mqtt_tls_enabled = (message == "1");
+    saveSettings();
+    connectMQTT();
+  }
+#endif
+}
+
+void mqttSetup() {
+  logMessage("MQTT: инициализация...");
+  mqtt = new PubSubClient(espClient);
+  mqtt->setKeepAlive(MQTT_KEEPALIVE);
+  if (isMqttConfigured() && WiFi.status() == WL_CONNECTED) {
+    connectMQTT();
+  }
+}
+
+void mqttLoop() {
+  if (mqtt == nullptr) return;
+  if (!isMqttConfigured() || WiFi.status() != WL_CONNECTED) return;
+  
+  if (!mqtt->connected()) {
+    static unsigned long lastReconnect = 0;
+    if (millis() - lastReconnect > MQTT_RECONNECT_INTERVAL) {
+      connectMQTT();
+      lastReconnect = millis();
+    }
+  } else {
+    mqtt->loop();
+    
+    if (millis() - lastStatusTime >= MQTT_STATUS_INTERVAL) {
+      lastStatusTime = millis();
+      String baseTopic = String(settings.mqtt_topic) + "/" + getDeviceId();
+      mqtt->publish((baseTopic + "/status").c_str(), "online", settings.mqtt_retain);
+      logMessage("Периодический статус: online");
+    }
+    
+    if (millis() - lastCurrentTime >= MQTT_CURRENT_INTERVAL) {
+      lastCurrentTime = millis();
+      float current = readCurrent();
+      publishCurrent(current);
+    }
+    
+    String pos = getPositionString();
+    if (pos != lastPosition) {
+      lastPosition = pos;
+      publishPosition(pos);
+    }
+  }
+}
+
+void connectMQTT() {
+  if (mqtt == nullptr || !isMqttConfigured() || WiFi.status() != WL_CONNECTED) return;
+  
+  mqtt->disconnect();
+  
+#ifdef ENABLE_TLS
+  if (settings.mqtt_tls_enabled && settings.ca_cert_present) {
+    if (secureClient == nullptr) secureClient = new WiFiClientSecure();
+    String ca = loadCertFromSPIFFS("/ca.crt");
+    if (ca.length() > 0) secureClient->setCACert(ca.c_str());
+    if (settings.client_cert_present && settings.client_key_present) {
+      String cert = loadCertFromSPIFFS("/client.crt");
+      String key = loadCertFromSPIFFS("/client.key");
+      if (cert.length() > 0 && key.length() > 0) {
+        secureClient->setCertificate(cert.c_str());
+        secureClient->setPrivateKey(key.c_str());
+      }
+    }
+    mqtt->setClient(*secureClient);
+  } else {
+    mqtt->setClient(espClient);
+  }
+#else
+  mqtt->setClient(espClient);
+#endif
+  
+  mqtt->setServer(settings.mqtt_server, settings.mqtt_port);
+  mqtt->setCallback(mqttCallback);
+  
+  String clientId = String(settings.device_name) + "_" + getDeviceId();
+  if (mqtt->connect(clientId.c_str(), settings.mqtt_user, settings.mqtt_password)) {
+    logMessage("MQTT подключён");
+    String baseTopic = String(settings.mqtt_topic) + "/" + getDeviceId();
+    mqtt->subscribe((baseTopic + "/command").c_str());
+    mqtt->subscribe((baseTopic + "/settings/#").c_str());
+    mqtt->publish((baseTopic + "/status").c_str(), "online", settings.mqtt_retain);
+    lastStatusTime = millis();
+  } else {
+    logMessage("MQTT ошибка подключения: " + String(mqtt->state()));
+  }
+}
+
+void publishState(String state) {
+  if (mqtt == nullptr || !mqtt->connected()) return;
+  String baseTopic = String(settings.mqtt_topic) + "/" + getDeviceId();
+  mqtt->publish((baseTopic + "/state").c_str(), state.c_str(), settings.mqtt_retain);
+}
+
+void publishPosition(String pos) {
+  if (mqtt == nullptr || !mqtt->connected()) return;
+  String baseTopic = String(settings.mqtt_topic) + "/" + getDeviceId();
+  mqtt->publish((baseTopic + "/position").c_str(), pos.c_str(), settings.mqtt_retain);
+}
+
+void publishCurrent(float current) {
+  if (mqtt == nullptr || !mqtt->connected()) return;
+  String baseTopic = String(settings.mqtt_topic) + "/" + getDeviceId();
+  mqtt->publish((baseTopic + "/current").c_str(), String(current, 2).c_str());
+}
+
+void mqttStatusUpdate() {
+  if (mqtt == nullptr || !mqtt->connected()) return;
+  String baseTopic = String(settings.mqtt_topic) + "/" + getDeviceId();
+  mqtt->publish((baseTopic + "/status").c_str(), "online", settings.mqtt_retain);
+  lastStatusTime = millis();
+}
+=== logger.cpp ===
+#include "logger.h"
+
+static File logFile;
+static LogLevel currentLevel = LOG_DEBUG;
+
+void logInit() {
+  if (!LittleFS.exists(LOG_FILE)) {
+    logFile = LittleFS.open(LOG_FILE, "w");
+    if (logFile) {
+      logFile.println("=== Лог запущен ===");
+      logFile.close();
+    }
+  }
+}
+
+void logWrite(LogLevel level, const String &message) {
+  if (level < currentLevel) return;
+  
+  if (!logFile || !logFile.available()) {
+    if (logFile) logFile.close();
+    logFile = LittleFS.open(LOG_FILE, "a");
+    if (!logFile) return;
+  }
+  
+  String levelStr;
+  switch (level) {
+    case LOG_DEBUG: levelStr = "DEBUG"; break;
+    case LOG_INFO:  levelStr = "INFO "; break;
+    case LOG_WARN:  levelStr = "WARN "; break;
+    case LOG_ERROR: levelStr = "ERROR"; break;
+  }
+  
+  String line = levelStr + " | " + message;
+  logFile.println(line);
+  logFile.flush();
+  
+  if (logFile.size() > LOG_MAX_SIZE) {
+    logFile.close();
+    File fRead = LittleFS.open(LOG_FILE, "r");
+    if (!fRead) return;
+    String content = fRead.readString();
+    fRead.close();
+    int excess = content.length() - (LOG_MAX_SIZE * 0.9);
+    if (excess > 0) {
+      content = content.substring(excess);
+      int nl = content.indexOf('\n');
+      if (nl > 0) content = content.substring(nl + 1);
+    }
+    logFile = LittleFS.open(LOG_FILE, "w");
+    if (logFile) {
+      logFile.print(content);
+      logFile.close();
+    }
+    logFile = LittleFS.open(LOG_FILE, "a");
+  }
+}
+
+void logWrite(const String &message) {
+  logWrite(LOG_INFO, message);
+}
+
+String logRead() {
+  if (logFile) logFile.close();
+  File f = LittleFS.open(LOG_FILE, "r");
+  if (!f) return "Лог недоступен";
+  String s = f.readString();
+  f.close();
+  return s;
+}
+
+void logClear() {
+  if (logFile) logFile.close();
+  LittleFS.remove(LOG_FILE);
+  logInit();
+}
+
+void setLogLevel(LogLevel level) {
+  currentLevel = level;
+}
+
+LogLevel getLogLevel() {
+  return currentLevel;
+}
+=== mqtt_handler.h ===
+#ifndef MQTT_HANDLER_H
+#define MQTT_HANDLER_H
+
+#include "config.h"
+#include "settings.h"
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+extern PubSubClient* mqtt;
+
+void mqttSetup();
+void mqttLoop();
+void connectMQTT();
+void publishState(String state);
+void publishPosition(String pos);
+void publishCurrent(float current);
+void mqttStatusUpdate();
+
+#endif
+=== logger.h ===
+#ifndef LOGGER_H
+#define LOGGER_H
+
+#include <Arduino.h>
+#include <LittleFS.h>
+
+#define LOG_FILE "/system.log"
+#define LOG_MAX_SIZE 51200  // 50 КБ
+
+enum LogLevel {
+  LOG_DEBUG = 0,
+  LOG_INFO  = 1,
+  LOG_WARN  = 2,
+  LOG_ERROR = 3
+};
+
+void logInit();
+void logWrite(LogLevel level, const String &message);
+void logWrite(const String &message);
+String logRead();
+void logClear();
+void setLogLevel(LogLevel level);
+LogLevel getLogLevel();
+
+#endif
+=== data/index.html ===
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>Gate Controller</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#1a1a1a;color:#fff;padding:10px;min-height:100vh}
+h1{text-align:center;margin:10px 0;font-size:24px}
+h2{font-size:18px;margin:10px 0}
+.tabs{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:15px}
+.tabs button{flex:1;min-width:60px;padding:8px 5px;font-size:11px;background:#333;color:#fff;border:none;border-radius:5px;cursor:pointer}
+.tabs button.active{background:#4CAF50}
+.tabcontent{display:none}
+.tabcontent.active{display:block}
+.control-btn{display:block;width:100%;padding:20px;margin:10px 0;font-size:22px;font-weight:bold;border:none;border-radius:12px;color:#fff;cursor:pointer;position:relative}
+.control-btn:disabled{opacity:0.6;cursor:not-allowed}
+.open{background:#4CAF50}
+.close{background:#FF9800}
+.stop{background:#f44336}
+input,textarea,select{width:100%;padding:10px;margin:5px 0;border-radius:8px;border:none;font-size:14px;background:#333;color:#fff}
+button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:8px;font-size:14px;cursor:pointer;margin:5px 0}
+button:disabled{opacity:0.6;cursor:not-allowed}
+button.danger{background:#f44336}
+.status{margin:10px 0;padding:10px;background:#333;border-radius:8px;text-align:center;font-size:16px}
+.info{background:#333;padding:10px;border-radius:8px;text-align:center;margin:10px 0}
+.loader{display:inline-block;width:20px;height:20px;border:3px solid rgba(255,255,255,.3);border-radius:50%;border-top-color:#fff;animation:spin 1s linear infinite;vertical-align:middle;margin-left:10px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.modal{display:none;position:fixed;z-index:100;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,0.7)}
+.modal-content{background:#222;margin:10% auto;padding:20px;border-radius:10px;width:90%;max-width:400px;text-align:center;color:#fff}
+.modal-buttons{display:flex;justify-content:center;gap:10px;margin-top:15px}
+.modal-buttons button{width:auto;padding:8px 25px;font-size:16px}
+.device-item{padding:10px;margin:5px 0;background:#333;border-radius:8px}
+.device-item button{background:#f44336;padding:5px 10px;font-size:12px;float:right}
+.network-item{padding:10px;margin:5px 0;background:#333;border-radius:8px;cursor:pointer}
+.network-item:hover{background:#444}
+label{display:block;margin:8px 0}
+#logArea{width:100%;height:300px;background:#111;color:#0f0;font-family:monospace;font-size:12px;border:none;padding:5px;resize:vertical}
+</style>
+</head>
+<body>
+
+<h1>Управление воротами<br><small style="font-size:16px;color:#aaa" id="ver">...</small></h1>
+<div class="info">
+  IP: <span id="ip">--</span> | Имя: <span id="host">gatecontroller.local</span>
+</div>
+
+<div class="tabs" id="tabsContainer">
+  <button class="active" onclick="openTab(event,'control')">Управление</button>
+  <button onclick="openTab(event,'wifi')">Wi-Fi</button>
+  <button onclick="openTab(event,'mqtt')">MQTT</button>
+  <button onclick="openTab(event,'tls')" id="tabTLS" style="display:none">TLS</button>
+  <button onclick="openTab(event,'ble')">BLE</button>
+  <button onclick="openTab(event,'devices')">Устройства</button>
+  <button onclick="openTab(event,'ota')">OTA</button>
+  <button onclick="openTab(event,'log')">Логи</button>
+  <button onclick="openTab(event,'test')">Тестирование</button>
+  <button onclick="openTab(event,'htmlupdate')">Обновить HTML</button>
+</div>
+
+<div id="control" class="tabcontent active">
+  <button class="control-btn open" onclick="sendCommand(event,'/open')">ОТКРЫТЬ</button>
+  <button class="control-btn stop" onclick="sendCommand(event,'/stop')">СТОП</button>
+  <button class="control-btn close" onclick="sendCommand(event,'/close')">ЗАКРЫТЬ</button>
+  <div class="status">
+    Состояние: <span id="state">-</span> | Ток: <span id="current">0.00</span> А<br>
+    FCA (Открыто): <span id="fca">-</span> | FCC (Закрыто): <span id="fcc">-</span>
+  </div>
+</div>
+
+<div id="wifi" class="tabcontent">
+  <h2>Wi-Fi сети</h2>
+  <button id="scanBtn" onclick="scanNetworks()">Сканировать</button>
+  <div id="networks"></div>
+</div>
+
+<div id="mqtt" class="tabcontent">
+  <h2>Настройки MQTT</h2>
+  <input id="mqtt_server" placeholder="Сервер (IP адрес)">
+  <input id="mqtt_port" type="number" placeholder="Порт (1883)">
+  <input id="mqtt_user" placeholder="Логин">
+  <input id="mqtt_password" type="password" placeholder="Пароль">
+  <input id="mqtt_topic" placeholder="Топик (gate)">
+  <label><input type="checkbox" id="mqtt_retain"> Retain (сохранять сообщения)</label>
+  <button onclick="saveMQTT(event)">Сохранить MQTT</button>
+</div>
+
+<div id="tls" class="tabcontent">
+  <h2>MQTT TLS</h2>
+  <label><input type="checkbox" id="tls_enabled"> Включить TLS</label>
+  <textarea id="ca_cert" rows="3" placeholder="CA сертификат (PEM)"></textarea>
+  <textarea id="client_cert" rows="3" placeholder="Клиентский сертификат (PEM)"></textarea>
+  <textarea id="client_key" rows="3" placeholder="Приватный ключ (PEM)"></textarea>
+  <label><input type="checkbox" id="verify_depth"> Глубокая проверка</label>
+  <button onclick="saveTLS(event)">Сохранить TLS</button>
+</div>
+
+<div id="ble" class="tabcontent">
+  <h2>Настройки Bluetooth</h2>
+  <label><input type="checkbox" id="ble_enabled"> Включить BLE</label>
+  <select id="ble_mode">
+    <option value="0">UART режим</option>
+    <option value="1">HID клавиатура</option>
+  </select>
+  <button onclick="saveBLE(event)">Сохранить BLE</button>
+</div>
+
+<div id="devices" class="tabcontent">
+  <h2>Привязанные устройства</h2>
+  <button onclick="refreshDevices()">Обновить</button>
+  <div id="deviceList"></div>
+</div>
+
+<div id="ota" class="tabcontent">
+  <h2>Обновление прошивки</h2>
+  <input type="file" id="firmware" accept=".bin">
+  <button onclick="uploadFirmware(event)">Обновить</button>
+  <div id="otaProgress"></div>
+  <hr>
+  <button class="danger" onclick="showConfirm('Сбросить ВСЕ настройки?', resetDevice)">Сброс всех настроек</button>
+  <button class="danger" onclick="showConfirm('Перезагрузить устройство?', rebootDevice)">Перезагрузка</button>
+</div>
+
+<div id="log" class="tabcontent">
+  <h2>Системный лог</h2>
+  <textarea id="logArea" readonly></textarea>
+  <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">
+    <button onclick="refreshLog()">Обновить</button>
+    <button onclick="clearLog()">Очистить</button>
+    <a href="/log" download="gate.log"><button>Скачать</button></a>
+  </div>
+  <label>Уровень: 
+    <select id="loglevel" onchange="setLevel()">
+      <option value="0">DEBUG</option>
+      <option value="1" selected>INFO</option>
+      <option value="2">WARN</option>
+      <option value="3">ERROR</option>
+    </select>
+  </label>
+</div>
+
+<div id="test" class="tabcontent">
+  <h2>Тестирование оборудования</h2>
+  <p>Внимание: двигатель и концевики могут быть отключены. Команды игнорируют концевые выключатели.</p>
+  <div class="test-status" id="testFCA"></div>
+  <div class="test-status" id="testFCC"></div>
+  <button class="open" onclick="testCommand('/testopen')">Тест ОТКРЫТЬ</button>
+  <button class="stop" onclick="testCommand('/teststop')">Стоп</button>
+  <button class="close" onclick="testCommand('/testclose')">Тест ЗАКРЫТЬ</button>
+  
+  <h3>Проверка концевиков</h3>
+  <p>Замкните перемычкой GND и соответствующий пин (D7 - Открыто, D6 - Закрыто).</p>
+  <button onclick="window.open('/testwaitfca','_blank')">Инструкция FCA</button>
+  <button onclick="window.open('/testwaitfcc','_blank')">Инструкция FCC</button>
+  <div>
+    FCA сейчас: <span id="curFCA">-</span> | FCC сейчас: <span id="curFCC">-</span>
+    <button onclick="refreshEnds()">Обновить</button>
+  </div>
+</div>
+
+<div id="htmlupdate" class="tabcontent">
+  <h2>Обновление HTML интерфейса</h2>
+  <p>Выберите новый файл index.html для загрузки. После успешной загрузки страница автоматически перезагрузится.</p>
+  <input type="file" id="htmlFileInput" accept=".html">
+  <button onclick="uploadHTML()">Загрузить HTML</button>
+  <div id="htmlUploadStatus"></div>
+</div>
+
+<!-- Wi-Fi Modal -->
+<div id="wifiModal" class="modal">
+  <div class="modal-content">
+    <h3>Подключение к Wi-Fi</h3>
+    <div id="scanStatus" style="margin-bottom:10px"></div>
+    <div class="wifi-form">
+      <input type="text" id="ssidInput" placeholder="SSID сети" list="ssidList">
+      <datalist id="ssidList"></datalist>
+      <input type="text" id="passInput" placeholder="Пароль">
+      <button id="connectBtn" onclick="startConnect()">Подключиться</button>
+      <button class="danger" onclick="closeWifiModal()">Отмена</button>
+    </div>
+    <div id="connectStatus" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<!-- Confirm Modal -->
+<div id="confirmModal" class="modal">
+  <div class="modal-content">
+    <p id="confirmText"></p>
+    <div class="modal-buttons">
+      <button id="confirmYes">Да</button>
+      <button class="danger" onclick="closeConfirm()">Нет</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// === Общие функции ===
+function openTab(evt, tabName) {
+  document.querySelectorAll('.tabcontent').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('active'));
+  document.getElementById(tabName).classList.add('active');
+  evt.currentTarget.classList.add('active');
+  if (tabName === 'log') refreshLog();
+  else if (tabName === 'test') refreshEnds();
+  else fillTab(tabName);
+}
+
+function updateInfo() {
+  fetch('/info').then(r=>r.json()).then(d=>{
+    document.getElementById('ip').innerText = d.ip || '--';
+    document.getElementById('host').innerText = d.hostname || 'gatecontroller.local';
+    document.getElementById('ver').innerText = d.version || '';
+    if (d.tls_available) {
+      document.getElementById('tabTLS').style.display = 'inline-block';
+    } else {
+      document.getElementById('tabTLS').style.display = 'none';
+    }
+    window._info = d;
+    fetch('/getloglevel').then(r=>r.text()).then(lvl=>{
+      document.getElementById('loglevel').value = lvl;
+    });
+  }).catch(()=>{});
+}
+setInterval(updateInfo, 5000);
+updateInfo();
+
+function updateStatus() {
+  fetch('/status').then(r=>r.json()).then(d=>{
+    document.getElementById('state').innerText = d.state || '-';
+    document.getElementById('current').innerText = d.current ? d.current.toFixed(2) : '0.00';
+    fetch('/testfca').then(r=>r.text()).then(t=> document.getElementById('fca').innerText = t);
+    fetch('/testfcc').then(r=>r.text()).then(t=> document.getElementById('fcc').innerText = t);
+  }).catch(()=>{});
+}
+setInterval(updateStatus, 2000);
+updateStatus();
+
+function sendCommand(ev, url) {
+  let btn = ev.target;
+  btn.disabled = true;
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  fetch(url).then(r=>r.text()).finally(()=>{
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  });
+}
+
+function fillTab(tab) {
+  const d = window._info;
+  if (!d) return;
+  if (tab === 'mqtt') {
+    document.getElementById('mqtt_server').value = d.mqtt_server || '';
+    document.getElementById('mqtt_port').value = d.mqtt_port || 1883;
+    document.getElementById('mqtt_user').value = d.mqtt_user || '';
+    document.getElementById('mqtt_topic').value = d.mqtt_topic || 'gate';
+    document.getElementById('mqtt_retain').checked = !!d.mqtt_retain;
+  } else if (tab === 'ble') {
+    document.getElementById('ble_enabled').checked = d.ble_enabled === true;
+    document.getElementById('ble_mode').value = (d.ble_mode === 'HID') ? '1' : '0';
+  }
+}
+
+// === Wi-Fi ===
+function scanNetworks() {
+  let btn = document.getElementById('scanBtn');
+  btn.disabled = true;
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  fetch('/scan').then(r=>r.json()).then(nets=>{
+    let html = '';
+    nets.forEach(n=>{
+      let icon = n.encryption=='OPEN'?'🔓':'🔒';
+      let strength = n.rssi>-50?'отличный':n.rssi>-70?'средний':'слабый';
+      html += `<div class="network-item" onclick="openWifiModal('${n.ssid}')">${icon} ${n.ssid} <small>(${n.rssi} dBm, ${strength})</small></div>`;
+    });
+    document.getElementById('networks').innerHTML = html || 'Сети не найдены';
+  }).finally(()=>{
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  });
+}
+
+function openWifiModal(presetSSID = '') {
+  document.getElementById('wifiModal').style.display = 'block';
+  document.getElementById('scanStatus').innerHTML = 'Загрузка списка сетей... <span class="loader"></span>';
+  document.getElementById('connectBtn').disabled = true;
+  fetch('/scan').then(r=>r.json()).then(nets=>{
+    let datalist = document.getElementById('ssidList');
+    datalist.innerHTML = '';
+    nets.forEach(n=>{
+      let opt = document.createElement('option');
+      opt.value = n.ssid;
+      datalist.appendChild(opt);
+    });
+    document.getElementById('scanStatus').innerHTML = 'Список сетей загружен';
+    document.getElementById('connectBtn').disabled = false;
+  }).catch(()=>{
+    document.getElementById('scanStatus').innerHTML = 'Ошибка загрузки';
+    document.getElementById('connectBtn').disabled = false;
+  });
+  document.getElementById('ssidInput').value = presetSSID;
+  document.getElementById('passInput').value = '';
+  document.getElementById('connectStatus').innerHTML = '';
+  document.getElementById('connectBtn').innerHTML = 'Подключиться';
+}
+
+function closeWifiModal() {
+  document.getElementById('wifiModal').style.display = 'none';
+}
+
+async function startConnect() {
+  let ssid = document.getElementById('ssidInput').value.trim();
+  let pass = document.getElementById('passInput').value;
+  if (!ssid) return;
+  
+  let btn = document.getElementById('connectBtn');
+  btn.disabled = true;
+  btn.innerHTML = 'Подключение... <span class="loader"></span>';
+  
+  let formData = new FormData();
+  formData.append('ssid', ssid);
+  formData.append('password', pass);
+  
+  try {
+    let resp = await fetch('/connect', {method:'POST', body: formData});
+    let result = await resp.json();
+    if (result.status !== 'started') throw new Error('Not started');
+    
+    let interval = setInterval(async () => {
+      let s = await fetch('/connect_status');
+      let status = await s.json();
+      if (status.status === 'connected') {
+        clearInterval(interval);
+        document.getElementById('connectStatus').innerHTML = 
+          `<p style="color:#4CAF50">Подключено! IP: ${status.ip}</p>`;
+        setTimeout(() => { window.location.href = 'http://' + status.ip + '/'; }, 3000);
+      } else if (status.status === 'failed') {
+        clearInterval(interval);
+        document.getElementById('connectStatus').innerHTML = 
+          '<p style="color:#f44336">Ошибка подключения</p>';
+        btn.disabled = false;
+        btn.innerHTML = 'Подключиться';
+      }
+    }, 1000);
+  } catch (e) {
+    document.getElementById('connectStatus').innerHTML = '<p style="color:#f44336">Ошибка запроса</p>';
+    btn.disabled = false;
+    btn.innerHTML = 'Подключиться';
+  }
+}
+
+// === MQTT ===
+function saveMQTT(ev) {
+  let btn = ev.target;
+  btn.disabled = true;
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  
+  let formData = new FormData();
+  formData.append('mqtt_server', document.getElementById('mqtt_server').value);
+  formData.append('mqtt_port', document.getElementById('mqtt_port').value);
+  formData.append('mqtt_user', document.getElementById('mqtt_user').value);
+  formData.append('mqtt_password', document.getElementById('mqtt_password').value);
+  formData.append('mqtt_topic', document.getElementById('mqtt_topic').value);
+  formData.append('mqtt_retain', document.getElementById('mqtt_retain').checked ? '1' : '0');
+  
+  fetch('/mqtt_save', {method:'POST', body: formData})
+    .then(r=>r.text())
+    .then(()=>{
+      btn.disabled = false;
+      btn.innerHTML = orig;
+      showConfirm('MQTT настройки сохранены', ()=>{});
+    });
+}
+
+// === TLS ===
+function saveTLS(ev) {
+  let btn = ev.target;
+  btn.disabled = true;
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  
+  let formData = new FormData();
+  formData.append('tls_enabled', document.getElementById('tls_enabled').checked ? '1' : '0');
+  formData.append('ca_cert', document.getElementById('ca_cert').value);
+  formData.append('client_cert', document.getElementById('client_cert').value);
+  formData.append('client_key', document.getElementById('client_key').value);
+  formData.append('verify_depth', document.getElementById('verify_depth').checked ? '1' : '0');
+  
+  fetch('/tls_save', {method:'POST', body: formData})
+    .then(r=>r.text())
+    .then(()=>{
+      btn.disabled = false;
+      btn.innerHTML = orig;
+      showConfirm('TLS настройки сохранены', ()=>{});
+    });
+}
+
+// === BLE ===
+function saveBLE(ev) {
+  let btn = ev.target;
+  btn.disabled = true;
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  
+  let formData = new FormData();
+  formData.append('ble_enabled', document.getElementById('ble_enabled').checked ? '1' : '0');
+  formData.append('ble_mode', document.getElementById('ble_mode').value);
+  
+  fetch('/ble_save', {method:'POST', body: formData})
+    .then(r=>r.text())
+    .then(()=>{
+      btn.disabled = false;
+      btn.innerHTML = orig;
+      showConfirm('BLE настройки сохранены', ()=>{});
+    });
+}
+
+// === Устройства ===
+function refreshDevices() {
+  fetch('/bonded_devices').then(r=>r.json()).then(devices=>{
+    let html = '';
+    devices.forEach(d=>{
+      html += `<div class="device-item">
+        <button onclick="removeDevice('${d.address}')">Удалить</button>
+        <strong>${d.name}</strong><br>
+        <small>MAC: ${d.address}</small><br>
+        <small>ПИН: ${d.pin}</small>
+      </div>`;
+    });
+    document.getElementById('deviceList').innerHTML = html || 'Нет привязанных устройств';
+  });
+}
+
+function removeDevice(address) {
+  showConfirm(`Удалить устройство ${address}?`, () => {
+    fetch('/remove_device?address=' + encodeURIComponent(address))
+      .then(r=>r.text())
+      .then(()=>refreshDevices());
+  });
+}
+
+// === OTA ===
+function uploadFirmware(ev) {
+  let file = document.getElementById('firmware').files[0];
+  if (!file) {
+    showConfirm('Выберите файл прошивки', ()=>{});
+    return;
+  }
+  let btn = ev.target;
+  btn.disabled = true;
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  
+  let formData = new FormData();
+  formData.append('update', file);
+  
+  fetch('/update', {method:'POST', body: formData})
+    .then(r=>r.text())
+    .then(t=>{
+      document.getElementById('otaProgress').innerHTML = t;
+      btn.disabled = false;
+      btn.innerHTML = orig;
+    });
+}
+
+function resetDevice() {
+  fetch('/reset').then(r=>r.text()).then(()=>{
+    document.body.innerHTML = '<h2 style="text-align:center;margin-top:50px">Настройки сброшены. Перезагрузка...</h2>';
+  });
+}
+
+function rebootDevice() {
+  fetch('/reboot').then(r=>r.text()).then(()=>{
+    document.body.innerHTML = '<h2 style="text-align:center;margin-top:50px">Перезагрузка...</h2>';
+  });
+}
+
+// === Модальные окна ===
+function showConfirm(text, callback) {
+  document.getElementById('confirmText').innerText = text;
+  document.getElementById('confirmModal').style.display = 'block';
+  document.getElementById('confirmYes').onclick = function() {
+    closeConfirm();
+    if (callback) callback();
+  };
+}
+
+function closeConfirm() {
+  document.getElementById('confirmModal').style.display = 'none';
+}
+
+// === Логи ===
+function refreshLog() {
+  fetch('/log').then(r=>r.text()).then(t=>{
+    document.getElementById('logArea').value = t;
+    document.getElementById('logArea').scrollTop = document.getElementById('logArea').scrollHeight;
+  });
+}
+
+function clearLog() {
+  if (confirm('Очистить лог?')) {
+    fetch('/clearlog').then(r=>r.text()).then(t=>{
+      alert(t);
+      refreshLog();
+    });
+  }
+}
+
+function setLevel() {
+  let lvl = document.getElementById('loglevel').value;
+  fetch('/setloglevel', {
+    method:'POST',
+    headers: {'Content-Type':'application/x-www-form-urlencoded'},
+    body: 'level=' + lvl
+  }).then(r=>r.text()).then(t=>alert(t));
+}
+
+// === Тестирование ===
+function testCommand(url) {
+  let btn = event.target;
+  btn.disabled = true;
+  let orig = btn.innerHTML;
+  btn.innerHTML += ' <span class="loader"></span>';
+  fetch(url).then(r=>r.text()).finally(()=>{
+    btn.disabled = false;
+    btn.innerHTML = orig;
+    refreshEnds();
+  });
+}
+
+function refreshEnds() {
+  fetch('/testfca').then(r=>r.text()).then(t=>{
+    document.getElementById('testFCA').innerText = 'FCA: ' + t;
+    document.getElementById('curFCA').innerText = t;
+  });
+  fetch('/testfcc').then(r=>r.text()).then(t=>{
+    document.getElementById('testFCC').innerText = 'FCC: ' + t;
+    document.getElementById('curFCC').innerText = t;
+  });
+}
+
+// === Обновление HTML ===
+function uploadHTML() {
+  var file = document.getElementById('htmlFileInput').files[0];
+  if (!file) {
+    alert('Выберите файл');
+    return;
+  }
+  var formData = new FormData();
+  formData.append('file', file);
+  document.getElementById('htmlUploadStatus').innerHTML = 'Загрузка...';
+  fetch('/uploadhtml', {method:'POST', body: formData})
+    .then(r => r.text())
+    .then(t => {
+      document.getElementById('htmlUploadStatus').innerHTML = 'HTML обновлён. Перезагружаем...';
+      setTimeout(() => location.reload(), 1000);
+    })
+    .catch(e => {
+      document.getElementById('htmlUploadStatus').innerHTML = 'Ошибка: ' + e;
+    });
+}
+</script>
+</body>
+</html>
+=== settings.cpp ===
+#include "settings.h"
+#include "utils.h"
+#include <LittleFS.h>
+
+Settings settings;
+BondedDevice bondedDevices[MAX_BONDED_DEVICES];
+int bondedCount = 0;
+
+static Preferences prefs;
+
+bool validateSettings() {
+  if (settings.device_name[0] == '\0' || strlen(settings.device_name) > 32) {
+    logMessage("Настройки: некорректное имя устройства");
+    return false;
+  }
+  for (size_t i = 0; i < strlen(settings.device_name); i++) {
+    if (settings.device_name[i] < 32 || settings.device_name[i] > 126) {
+      logMessage("Настройки: мусорные символы в имени устройства");
+      return false;
+    }
+  }
+  if (settings.mqtt_port > 65535) {
+    logMessage("Настройки: некорректный порт MQTT");
+    return false;
+  }
+  if (strlen(settings.mqtt_server) > 64) {
+    logMessage("Настройки: некорректный сервер MQTT");
+    return false;
+  }
+  if (settings.current_threshold < 0.1f || settings.current_threshold > 20.0f) {
+    logMessage("Настройки: некорректный порог тока");
+    return false;
+  }
+  if (settings.wifi_timeout > 60) {
+    logMessage("Настройки: некорректный таймаут Wi-Fi");
+    return false;
+  }
+  if (settings.timezone < -12 || settings.timezone > 12) {
+    logMessage("Настройки: некорректная временная зона");
+    return false;
+  }
+  for (int i = 0; i < 33 && settings.sta_ssid[i]; i++) {
+    if (settings.sta_ssid[i] < 32 || settings.sta_ssid[i] > 126) {
+      logMessage("Настройки: мусор в sta_ssid");
+      return false;
+    }
+  }
+  for (int i = 0; i < 65 && settings.sta_password[i]; i++) {
+    if (settings.sta_password[i] < 32 || settings.sta_password[i] > 126) {
+      logMessage("Настройки: мусор в sta_password");
+      return false;
+    }
+  }
+#ifdef ENABLE_TLS
+  if (settings.mqtt_tls_enabled) {
+    // Дополнительные проверки TLS
+  }
+#endif
+  return true;
+}
+
+void initSettings() {
+  prefs.begin("gate", false);
+  
+  String val;
+  settings.timezone = prefs.getChar("tz", 3);
+  settings.mqtt_port = prefs.getUShort("mqtt_port", 1883);
+  settings.current_threshold = prefs.getFloat("cur_thr", DEFAULT_THRESHOLD);
+  settings.wifi_timeout = prefs.getUChar("wifi_to", 5);
+  
+  settings.ble_enabled = prefs.getBool("ble_en", false);
+  settings.ble_hid_mode = prefs.getBool("ble_hid", false);
+  settings.mqtt_retain = prefs.getBool("mqtt_ret", false);
+  
+#ifdef ENABLE_TLS
+  settings.mqtt_tls_enabled = prefs.getBool("tls_en", false);
+  settings.mqtt_verify_depth = prefs.getBool("tls_vd", false);
+  settings.ca_cert_present = prefs.getBool("ca_cert", false);
+  settings.client_cert_present = prefs.getBool("cl_cert", false);
+  settings.client_key_present = prefs.getBool("cl_key", false);
+#endif
+  
+  val = prefs.getString("sta_ssid", "");
+  strncpy(settings.sta_ssid, val.c_str(), sizeof(settings.sta_ssid)-1);
+  settings.sta_ssid[sizeof(settings.sta_ssid)-1] = '\0';
+  
+  val = prefs.getString("sta_pass", "");
+  strncpy(settings.sta_password, val.c_str(), sizeof(settings.sta_password)-1);
+  settings.sta_password[sizeof(settings.sta_password)-1] = '\0';
+  
+  val = prefs.getString("mqtt_srv", "");
+  strncpy(settings.mqtt_server, val.c_str(), sizeof(settings.mqtt_server)-1);
+  settings.mqtt_server[sizeof(settings.mqtt_server)-1] = '\0';
+  
+  val = prefs.getString("mqtt_user", "");
+  strncpy(settings.mqtt_user, val.c_str(), sizeof(settings.mqtt_user)-1);
+  settings.mqtt_user[sizeof(settings.mqtt_user)-1] = '\0';
+  
+  val = prefs.getString("mqtt_pass", "");
+  strncpy(settings.mqtt_password, val.c_str(), sizeof(settings.mqtt_password)-1);
+  settings.mqtt_password[sizeof(settings.mqtt_password)-1] = '\0';
+  
+  val = prefs.getString("mqtt_topic", "gate");
+  strncpy(settings.mqtt_topic, val.c_str(), sizeof(settings.mqtt_topic)-1);
+  settings.mqtt_topic[sizeof(settings.mqtt_topic)-1] = '\0';
+  
+  val = prefs.getString("dev_name", "GateController");
+  strncpy(settings.device_name, val.c_str(), sizeof(settings.device_name)-1);
+  settings.device_name[sizeof(settings.device_name)-1] = '\0';
+  
+  prefs.end();
+  
+  if (settings.device_name[0] == '\0') {
+    resetSettings();
+    saveSettings();
+  } else if (!validateSettings()) {
+    resetSettings();
+    saveSettings();
+  }
+  
+  logMessage("Настройки загружены");
+  logMessage("  Имя устройства: " + String(settings.device_name));
+  logMessage("  Сервер MQTT: " + String(settings.mqtt_server));
+  logMessage("  Порт MQTT: " + String(settings.mqtt_port));
+  logMessage("  Топик MQTT: " + String(settings.mqtt_topic));
+  logMessage("  Порог тока: " + String(settings.current_threshold, 1) + " А");
+  logMessage("  Таймаут Wi-Fi: " + String(settings.wifi_timeout) + " мин");
+  logMessage("  BLE: " + String(settings.ble_enabled ? "да" : "нет"));
+  logMessage("  Retain: " + String(settings.mqtt_retain ? "да" : "нет"));
+  logMessage("  Часовой пояс: UTC" + String(settings.timezone >= 0 ? "+" : "") + String(settings.timezone));
+}
+
+void resetSettings() {
+  memset(&settings, 0, sizeof(Settings));
+  strcpy(settings.device_name, "GateController");
+  strcpy(settings.mqtt_server, "");
+  settings.mqtt_port = 1883;
+  settings.wifi_timeout = 5;
+  settings.current_threshold = DEFAULT_THRESHOLD;
+  strcpy(settings.mqtt_topic, "gate");
+  settings.timezone = 3;
+  logMessage("Настройки сброшены на значения по умолчанию");
+}
+
+void saveSettings() {
+  prefs.begin("gate", false);
+  
+  prefs.putChar("tz", settings.timezone);
+  prefs.putUShort("mqtt_port", settings.mqtt_port);
+  prefs.putFloat("cur_thr", settings.current_threshold);
+  prefs.putUChar("wifi_to", settings.wifi_timeout);
+  
+  prefs.putBool("ble_en", settings.ble_enabled);
+  prefs.putBool("ble_hid", settings.ble_hid_mode);
+  prefs.putBool("mqtt_ret", settings.mqtt_retain);
+  
+#ifdef ENABLE_TLS
+  prefs.putBool("tls_en", settings.mqtt_tls_enabled);
+  prefs.putBool("tls_vd", settings.mqtt_verify_depth);
+  prefs.putBool("ca_cert", settings.ca_cert_present);
+  prefs.putBool("cl_cert", settings.client_cert_present);
+  prefs.putBool("cl_key", settings.client_key_present);
+#endif
+  
+  prefs.putString("sta_ssid", settings.sta_ssid);
+  prefs.putString("sta_pass", settings.sta_password);
+  prefs.putString("mqtt_srv", settings.mqtt_server);
+  prefs.putString("mqtt_user", settings.mqtt_user);
+  prefs.putString("mqtt_pass", settings.mqtt_password);
+  prefs.putString("mqtt_topic", settings.mqtt_topic);
+  prefs.putString("dev_name", settings.device_name);
+  
+  prefs.end();
+  logMessage("Настройки сохранены в Preferences");
+  logMessage("  Имя: " + String(settings.device_name) +
+             ", MQTT: " + String(settings.mqtt_server) +
+             ":" + String(settings.mqtt_port) +
+             ", Топик: " + String(settings.mqtt_topic) +
+             ", Retain: " + String(settings.mqtt_retain ? "да" : "нет") +
+             ", BLE: " + String(settings.ble_enabled ? "вкл" : "выкл") +
+             ", Wi-Fi: " + String(settings.sta_ssid));
+}
+
+void loadBondedDevices() {
+  EEPROM.begin(256);
+  int addr = 0;
+  EEPROM.get(addr, bondedCount);
+  addr += sizeof(int);
+  for (int i = 0; i < MAX_BONDED_DEVICES; i++) {
+    EEPROM.get(addr, bondedDevices[i]);
+    addr += sizeof(BondedDevice);
+  }
+  EEPROM.end();
+  logMessage("Привязанные устройства: загружено " + String(bondedCount));
+}
+
+void saveBondedDevices() {
+  EEPROM.begin(256);
+  int addr = 0;
+  EEPROM.put(addr, bondedCount);
+  addr += sizeof(int);
+  for (int i = 0; i < MAX_BONDED_DEVICES; i++) {
+    EEPROM.put(addr, bondedDevices[i]);
+    addr += sizeof(BondedDevice);
+  }
+  EEPROM.commit();
+  EEPROM.end();
+  logMessage("Привязанные устройства сохранены");
+}
+
+int findBondedDevice(String address) {
+  for (int i = 0; i < MAX_BONDED_DEVICES; i++) {
+    if (bondedDevices[i].active && String(bondedDevices[i].address) == address) return i;
+  }
+  return -1;
+}
+
+int addBondedDevice(String address, String name, String pin) {
+  int idx = findBondedDevice(address);
+  if (idx >= 0) {
+    bondedDevices[idx].active = true;
+    name.toCharArray(bondedDevices[idx].name, 33);
+    pin.toCharArray(bondedDevices[idx].pin, PIN_CODE_LENGTH + 1);
+    saveBondedDevices();
+    logMessage("Привязанное устройство обновлено: " + address);
+    return idx;
+  }
+  for (int i = 0; i < MAX_BONDED_DEVICES; i++) {
+    if (!bondedDevices[i].active) {
+      address.toCharArray(bondedDevices[i].address, 18);
+      name.toCharArray(bondedDevices[i].name, 33);
+      pin.toCharArray(bondedDevices[i].pin, PIN_CODE_LENGTH + 1);
+      bondedDevices[i].active = true;
+      bondedCount++;
+      saveBondedDevices();
+      logMessage("Привязанное устройство добавлено: " + address);
+      return i;
+    }
+  }
+  logMessage("Привязанные устройства: список заполнен!");
+  return -1;
+}
+
+bool removeBondedDevice(String address) {
+  for (int i = 0; i < MAX_BONDED_DEVICES; i++) {
+    if (bondedDevices[i].active && String(bondedDevices[i].address) == address) {
+      bondedDevices[i].active = false;
+      bondedCount--;
+      saveBondedDevices();
+      logMessage("Привязанное устройство удалено: " + address);
+      return true;
+    }
+  }
+  return false;
+}
+
+String generatePin() {
+  String pin = "";
+  for (int i = 0; i < PIN_CODE_LENGTH; i++) pin += String(random(0, 10));
+  return pin;
+}
+=== web_server.cpp ===
+#include "web_server.h"
+#include "settings.h"
+#include "wifi_manager.h"
+#include "motor_control.h"
+#include "current_sensor.h"
+#include "ble_handler.h"
+#include "logger.h"
+#include "utils.h"
+#include <LittleFS.h>
+#include <Update.h>
+
+WebServer server(80);
+const char* HTML_FILE = "/index.html";
+
+static unsigned long lastTestCommand = 0;
+const unsigned long TEST_DEBOUNCE = 1000;
+
+void initWebServer() {
+  
+  server.on("/", []() {
+    if (LittleFS.exists(HTML_FILE)) {
+      File file = LittleFS.open(HTML_FILE, "r");
+      if (file && file.size() > 100) {
+        server.streamFile(file, "text/html");
+        file.close();
+        return;
+      }
+      if (file) file.close();
+    }
+    server.send(200, "text/html", getMinimalHTML());
+  });
+  
+  server.on("/favicon.ico", []() { server.send(204); });
+  server.on("/generate_204", []() {
+    server.sendHeader("Location", "/", true);
+    server.send(302, "text/plain", "");
+  });
+  
+  server.on("/scan", []() { server.send(200, "application/json", scanWiFiNetworks()); });
+  
+  server.on("/connect", HTTP_POST, []() {
+    String ssid = server.arg("ssid").substring(0, sizeof(settings.sta_ssid)-1);
+    String pass = server.arg("password").substring(0, sizeof(settings.sta_password)-1);
+    if (ssid.length() == 0) { server.send(400, "text/plain", "SSID required"); return; }
+    strncpy(settings.sta_ssid, ssid.c_str(), sizeof(settings.sta_ssid)-1);
+    settings.sta_ssid[sizeof(settings.sta_ssid)-1] = '\0';
+    strncpy(settings.sta_password, pass.c_str(), sizeof(settings.sta_password)-1);
+    settings.sta_password[sizeof(settings.sta_password)-1] = '\0';
+    saveSettings();
+    startWiFiConnect(ssid.c_str(), pass.c_str());
+    server.send(200, "application/json", "{\"status\":\"started\"}");
+  });
+  
+  server.on("/connect_status", []() { server.send(200, "application/json", getWiFiConnectStatus()); });
+  
+  server.on("/open",  []() { startForward(); server.send(200, "text/plain", "ОТКРЫТЬ"); });
+  server.on("/close", []() { startReverse(); server.send(200, "text/plain", "ЗАКРЫТЬ"); });
+  server.on("/stop",  []() { stopMotor();    server.send(200, "text/plain", "СТОП"); });
+  
+  server.on("/status", []() {
+    float current = readCurrent();
+    String json = "{\"state\":\"" + getStatusString() + "\",\"current\":" + String(current) + "}";
+    server.send(200, "application/json", json);
+  });
+  
+  server.on("/info", []() {
+    String json = "{";
+    json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
+    json += "\"ap_ip\":\"" + WiFi.softAPIP().toString() + "\",";
+    json += "\"ssid\":\"" + String(apMode ? getApSSID() : settings.sta_ssid) + "\",";
+    json += "\"mode\":\"" + String(apMode ? "AP" : "STA") + "\",";
+    json += "\"hostname\":\"" + String(settings.device_name) + ".local\",";
+    json += "\"device\":\"" + String(settings.device_name) + "\",";
+    json += "\"mqtt_server\":\"" + String(settings.mqtt_server) + "\",";
+    json += "\"mqtt_port\":" + String(settings.mqtt_port) + ",";
+    json += "\"mqtt_user\":\"" + String(settings.mqtt_user) + "\",";
+    json += "\"mqtt_topic\":\"" + String(settings.mqtt_topic) + "\",";
+    json += "\"mqtt_retain\":" + String(settings.mqtt_retain ? "true" : "false") + ",";
+    json += "\"ble_enabled\":" + String(settings.ble_enabled ? "true" : "false") + ",";
+    json += "\"ble_mode\":\"" + String(settings.ble_hid_mode ? "HID" : "UART") + "\",";
+    json += "\"version\":\"" + String(FIRMWARE_VERSION) + "\",";
+    json += "\"tls_available\":false";
+    json += "}";
+    server.send(200, "application/json", json);
+  });
+  
+  server.on("/mqtt_save", HTTP_POST, []() {
+    if (server.hasArg("mqtt_server")) server.arg("mqtt_server").toCharArray(settings.mqtt_server, 65);
+    if (server.hasArg("mqtt_port")) settings.mqtt_port = server.arg("mqtt_port").toInt();
+    if (server.hasArg("mqtt_user")) server.arg("mqtt_user").toCharArray(settings.mqtt_user, 33);
+    if (server.hasArg("mqtt_password")) server.arg("mqtt_password").toCharArray(settings.mqtt_password, 33);
+    if (server.hasArg("mqtt_topic")) server.arg("mqtt_topic").toCharArray(settings.mqtt_topic, 65);
+    settings.mqtt_retain = (server.arg("mqtt_retain") == "1");
+    saveSettings();
+    server.send(200, "text/plain", "MQTT сохранён");
+  });
+  
+  server.on("/ble_save", HTTP_POST, []() {
+    settings.ble_enabled = (server.arg("ble_enabled") == "1");
+    settings.ble_hid_mode = (server.arg("ble_mode") == "1");
+    saveSettings();
+    if (settings.ble_enabled) { stopBLE(); initBLE(); } else stopBLE();
+    server.send(200, "text/plain", "BLE сохранён");
+  });
+  
+  server.on("/bonded_devices", []() {
+    String json = "[";
+    bool first = true;
+    for (int i = 0; i < MAX_BONDED_DEVICES; i++) {
+      if (bondedDevices[i].active) {
+        if (!first) json += ",";
+        json += "{\"address\":\"" + String(bondedDevices[i].address) + "\",";
+        json += "\"name\":\"" + String(bondedDevices[i].name) + "\",";
+        json += "\"pin\":\"" + String(bondedDevices[i].pin) + "\"}";
+        first = false;
+      }
+    }
+    json += "]";
+    server.send(200, "application/json", json);
+  });
+  
+  server.on("/remove_device", []() {
+    if (server.hasArg("address")) {
+      if (removeBondedDevice(server.arg("address"))) server.send(200, "text/plain", "Удалено");
+      else server.send(404, "text/plain", "Не найдено");
+    } else server.send(400, "text/plain", "Некорректный запрос");
+  });
+  
+  // OTA-обновление
+  server.on("/update", HTTP_POST, []() {
+    server.send(200, "text/plain", Update.hasError() ? "ОШИБКА" : "OK. Перезагрузка...");
+    delay(1000); ESP.restart();
+  }, []() {
+    HTTPUpload& upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+      Update.begin(UPDATE_SIZE_UNKNOWN);
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+      Update.write(upload.buf, upload.currentSize);
+    } else if (upload.status == UPLOAD_FILE_END) {
+      Update.end(true);
+    }
+  });
+  
+  server.on("/reset", []() {
+    resetSettings(); saveSettings();
+    server.send(200, "text/plain", "Настройки сброшены. Перезагрузка...");
+    delay(1000); ESP.restart();
+  });
+  
+  server.on("/reboot", []() {
+    server.send(200, "text/plain", "Перезагрузка...");
+    delay(1000); ESP.restart();
+  });
+  
+  server.on("/clearlog", []() { logClear(); server.send(200, "text/plain", "Лог очищен"); });
+  
+  server.on("/setloglevel", HTTP_POST, []() {
+    if (server.hasArg("level")) {
+      int lvl = server.arg("level").toInt();
+      if (lvl >= 0 && lvl <= 3) {
+        setLogLevel((LogLevel)lvl);
+        server.send(200, "text/plain", "Уровень установлен");
+      } else {
+        server.send(400, "text/plain", "Неверный уровень");
+      }
+    } else {
+      server.send(400, "text/plain", "Нет параметра level");
+    }
+  });
+  
+  server.on("/getloglevel", []() { server.send(200, "text/plain", String(getLogLevel())); });
+  
+  // Тестовые команды
+  server.on("/testopen",  []() { testForward(); server.send(200, "text/plain", "Тест ОТКРЫТЬ"); });
+  server.on("/testclose", []() { testReverse(); server.send(200, "text/plain", "Тест ЗАКРЫТЬ"); });
+  server.on("/teststop",  []() { testStop();    server.send(200, "text/plain", "Тест СТОП"); });
+  
+  server.on("/testfca", []() { server.send(200, "text/plain", readFCA() ? "разомкнут" : "замкнут"); });
+  server.on("/testfcc", []() { server.send(200, "text/plain", readFCC() ? "разомкнут" : "замкнут"); });
+  
+  server.on("/testwaitfca", []() {
+    server.sendHeader("Content-Type", "text/html; charset=utf-8");
+    server.send(200, "text/html", R"rawliteral(
+      <html><body style="background:#1a1a1a;color:#fff;font-family:Arial;text-align:center;padding:20px">
+      <h2>Замкните концевик FCA (Открыто)</h2>
+      <p>Соедините GND и D7 перемычкой, затем нажмите "Проверить"</p>
+      <button onclick="check()">Проверить</button>
+      <script>
+        function check(){
+          fetch('/testfca').then(r=>r.text()).then(t=>{
+            if(t=='замкнут') alert('Концевик FCA замкнут!');
+            else alert('Концевик всё ещё разомкнут');
+          });
+        }
+      </script>
+      </body></html>
+    )rawliteral");
+  });
+  
+  server.on("/testwaitfcc", []() {
+    server.sendHeader("Content-Type", "text/html; charset=utf-8");
+    server.send(200, "text/html", R"rawliteral(
+      <html><body style="background:#1a1a1a;color:#fff;font-family:Arial;text-align:center;padding:20px">
+      <h2>Замкните концевик FCC (Закрыто)</h2>
+      <p>Соедините GND и D6 перемычкой, затем нажмите "Проверить"</p>
+      <button onclick="check()">Проверить</button>
+      <script>
+        function check(){
+          fetch('/testfcc').then(r=>r.text()).then(t=>{
+            if(t=='замкнут') alert('Концевик FCC замкнут!');
+            else alert('Концевик всё ещё разомкнут');
+          });
+        }
+      </script>
+      </body></html>
+    )rawliteral");
+  });
+  
+  server.on("/uploadhtml", HTTP_POST, []() {
+    server.send(200, "text/plain", "OK. Перезагрузите страницу.");
+  }, []() {
+    HTTPUpload& upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+      File f = LittleFS.open("/index.html", "w");
+      if (!f) return;
+      f.close();
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+      File f = LittleFS.open("/index.html", "a");
+      if (f) {
+        f.write((uint8_t*)upload.buf, upload.currentSize);
+        f.close();
+      }
+    }
+  });
+  
+  server.onNotFound([]() { server.send(404, "text/plain", "Not Found"); });
+  
+  server.on("/log", []() { server.send(200, "text/plain; charset=utf-8", logRead()); });
+  
+  server.begin();
+  logMessage("Веб-сервер: запущен на порту 80");
+}
+
+void handleWebServer() { server.handleClient(); }
+
+String getMinimalHTML() {
+  return R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gate Controller</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,sans-serif;background:#1a1a1a;color:#fff;padding:10px}
+h2{text-align:center;margin:10px 0}
+button{font-size:24px;padding:20px;margin:10px;border-radius:12px;border:none;width:90%;cursor:pointer;color:#fff}
+.open{background:#4CAF50}.stop{background:#f44336}.close{background:#FF9800}
+.status{text-align:center;margin-top:20px;font-size:16px;background:#333;padding:10px;border-radius:8px}
+.info{background:#333;padding:10px;border-radius:8px;text-align:center;margin:10px 0}
+.wifi-btn{background:#2196F3;margin-top:10px}
+</style>
+</head>
+<body>
+<h2>Управление воротами<br><small id="ver">...</small></h2>
+<div class="info">
+  IP: <span id="ip">--</span> | Имя: <span id="host">gatecontroller.local</span>
+</div>
+<button class="open" onclick="fetch('/open')">ОТКРЫТЬ</button>
+<button class="stop" onclick="fetch('/stop')">СТОП</button>
+<button class="close" onclick="fetch('/close')">ЗАКРЫТЬ</button>
+<button class="wifi-btn" onclick="openWifiModal()">Wi-Fi</button>
+<button class="wifi-btn" onclick="document.getElementById('htmlFileInput').click()">Обновить HTML</button>
+<input type="file" id="htmlFileInput" accept=".html" style="display:none" onchange="uploadHTML(this.files[0])">
+<div class="status">
+  Состояние: <span id="st">-</span> | Ток: <span id="cur">0.00</span> А
+</div>
+
+<div id="wifiModal" style="display:none;position:fixed;z-index:100;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,0.7)">
+  <div style="background:#222;margin:15% auto;padding:20px;border-radius:10px;width:90%;max-width:400px;text-align:center">
+    <h3>Подключение к Wi-Fi</h3>
+    <div id="scanStatus"></div>
+    <input type="text" id="ssidInput" placeholder="SSID сети" list="ssidList" style="width:100%;padding:10px;margin:5px 0;border-radius:8px;border:none;font-size:16px;background:#333;color:#fff">
+    <datalist id="ssidList"></datalist>
+    <input type="text" id="passInput" placeholder="Пароль" style="width:100%;padding:10px;margin:5px 0;border-radius:8px;border:none;font-size:16px;background:#333;color:#fff">
+    <button onclick="startConnect()" style="background:#4CAF50;color:#fff;padding:10px 30px;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin:5px">Подключиться</button>
+    <button onclick="closeWifiModal()" style="background:#f44336;color:#fff;padding:10px 30px;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin:5px">Отмена</button>
+    <div id="connectStatus"></div>
+  </div>
+</div>
+
+<script>
+function updateInfo(){
+  fetch('/info').then(r=>r.json()).then(d=>{
+    document.getElementById('ip').innerText = d.ip||'--';
+    document.getElementById('host').innerText = d.hostname||'gatecontroller.local';
+    document.getElementById('ver').innerText = d.version||'';
+  });
+}
+function updateStatus(){
+  fetch('/status').then(r=>r.json()).then(d=>{
+    document.getElementById('st').innerText = d.state||'-';
+    document.getElementById('cur').innerText = d.current?d.current.toFixed(2):'0.00';
+  });
+}
+setInterval(updateStatus,2000);
+setInterval(updateInfo,5000);
+updateStatus();updateInfo();
+
+function openWifiModal(){
+  document.getElementById('wifiModal').style.display='block';
+  document.getElementById('scanStatus').innerHTML='Загрузка...';
+  fetch('/scan').then(r=>r.json()).then(nets=>{
+    let datalist = document.getElementById('ssidList');
+    datalist.innerHTML = '';
+    nets.forEach(n=>{
+      let opt = document.createElement('option');
+      opt.value = n.ssid;
+      datalist.appendChild(opt);
+    });
+    document.getElementById('scanStatus').innerHTML='Готово';
+  });
+}
+function closeWifiModal(){ document.getElementById('wifiModal').style.display='none'; }
+
+async function startConnect(){
+  let ssid = document.getElementById('ssidInput').value.trim();
+  let pass = document.getElementById('passInput').value;
+  if(!ssid) return;
+  let btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Подключение...';
+  let formData = new FormData();
+  formData.append('ssid', ssid);
+  formData.append('password', pass);
+  let resp = await fetch('/connect', {method:'POST', body: formData});
+  let result = await resp.json();
+  if(result.status == 'started'){
+    let interval = setInterval(async ()=>{
+      let s = await fetch('/connect_status');
+      let status = await s.json();
+      if(status.status == 'connected'){
+        clearInterval(interval);
+        document.getElementById('connectStatus').innerHTML = '<p style="color:#4CAF50">Подключено! IP: '+status.ip+'</p>';
+        setTimeout(()=>{ location.href = 'http://'+status.ip+'/'; }, 3000);
+      } else if(status.status == 'failed'){
+        clearInterval(interval);
+        document.getElementById('connectStatus').innerHTML = '<p style="color:#f44336">Ошибка подключения</p>';
+        btn.disabled = false;
+        btn.textContent = 'Подключиться';
+      }
+    }, 1000);
+  } else {
+    document.getElementById('connectStatus').innerHTML = '<p style="color:#f44336">Ошибка запуска</p>';
+    btn.disabled = false;
+    btn.textContent = 'Подключиться';
+  }
+}
+
+function uploadHTML(file) {
+  if (!file) return;
+  var formData = new FormData();
+  formData.append('file', file);
+  fetch('/uploadhtml', {method:'POST', body: formData})
+    .then(r => r.text())
+    .then(t => {
+      alert('HTML обновлён. Перезагружаем...');
+      setTimeout(() => location.reload(), 1000);
+    });
+}
+</script>
+</body>
+</html>
+)rawliteral";
+}
+=== gate_controller.ino ===
+#include "config.h"
+#include "settings.h"
+#include "wifi_manager.h"
+#include "motor_control.h"
+#include "current_sensor.h"
+#include "mqtt_handler.h"
+#include "ble_handler.h"
+#include "web_server.h"
+#include "utils.h"
+#include "logger.h"
+#include "time_manager.h"
+#include <LittleFS.h>
+#include <ESPmDNS.h>
+
+void listLittleFS() {
+  logMessage("=== Содержимое LittleFS ===");
+  if (!LittleFS.begin(false)) {
+    logMessage("LittleFS не смонтирована!");
+    return;
+  }
+  File root = LittleFS.open("/");
+  if (!root) {
+    logMessage("Не удалось открыть корень LittleFS");
+    return;
+  }
+  File file = root.openNextFile();
+  if (!file) {
+    logMessage("LittleFS пуста");
+    return;
+  }
+  while (file) {
+    logMessage("  " + String(file.name()) + "  (" + String(file.size()) + " байт)");
+    file = root.openNextFile();
+  }
+  logMessage("=========================");
+}
+
+void ensureIndexHTML() {
+  if (LittleFS.exists("/index.html")) {
+    File f = LittleFS.open("/index.html", "r");
+    if (f && f.size() > 100) {
+      logMessage("index.html найден в LittleFS, размер " + String(f.size()) + " байт");
+      f.close();
+      return;
+    }
+    if (f) f.close();
+    logMessage("index.html повреждён или пуст, будет создан минимальный");
+  } else {
+    logMessage("index.html отсутствует в LittleFS, создаю минимальный");
+  }
+
+  File f = LittleFS.open("/index.html", "w");
+  if (f) {
+    f.print(getMinimalHTML());
+    f.close();
+    logMessage("Минимальный index.html записан в LittleFS");
+  } else {
+    logMessage("Ошибка создания index.html");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  logInit();
+  logMessage("=== ЗАПУСК КОНТРОЛЛЕРА v" + String(FIRMWARE_VERSION) + " ===");
+
+  Serial.println();
+  Serial.println("╔══════════════════════════════════════╗");
+  Serial.println("║     GATE CONTROLLER v" + String(FIRMWARE_VERSION) + "             ║");
+  Serial.println("╚══════════════════════════════════════╝");
+  Serial.println();
+
+  TimeManager::begin();
+  TimeManager::setTimezone(settings.timezone);
+
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
+  logMessage("Инициализация двигателя");
+  motorSetup();
+
+  logMessage("Инициализация датчика тока");
+  currentSensorSetup();
+
+  logMessage("Монтирование LittleFS");
+  if (!LittleFS.begin(true)) {
+    logMessage("LittleFS: ошибка монтирования, форматирование...");
+    if (!LittleFS.format()) {
+      logMessage("LittleFS: фатальная ошибка, перезагрузка");
+      ESP.restart();
+    }
+    if (!LittleFS.begin(true)) {
+      logMessage("LittleFS: не удалось смонтировать после форматирования");
+      ESP.restart();
+    }
+  }
+  logMessage("LittleFS смонтирована");
+  listLittleFS();
+
+  logMessage("Загрузка настроек");
+  initSettings();
+  loadBondedDevices();
+  TimeManager::setTimezone(settings.timezone);
+
+  logMessage("Проверка/создание index.html");
+  ensureIndexHTML();
+
+  logMessage("Инициализация Wi-Fi");
+  initWiFi();
+
+  if (!apMode) {
+    if (MDNS.begin(settings.device_name)) {
+      delay(200);
+      logMessage("mDNS запущен: http://" + String(settings.device_name) + ".local");
+    } else {
+      logMessage("Ошибка запуска mDNS");
+    }
+    TimeManager::syncNTP();
+  }
+
+  logMessage("Запуск веб-сервера");
+  initWebServer();
+
+  logMessage("Запуск MQTT");
+  mqttSetup();
+
+  logMessage("Запуск BLE");
+  if (settings.ble_enabled) {
+    initBLE();
+  } else {
+    logMessage("BLE отключен в настройках");
+  }
+
+  logMessage("Система готова");
+  if (!apMode) {
+    logMessage("IP адрес: " + WiFi.localIP().toString());
+  } else {
+    logMessage("Точка доступа: " + getApSSID());
+  }
+
+  blinkLED(2);
+}
+
+void loop() {
+  bool justStarted = (currentState == MOVING_FORWARD || currentState == MOVING_REVERSE) &&
+                     (millis() - moveStartTime < 50);
+
+  if (!justStarted) {
+    if (apMode) {
+      dnsServer.processNextRequest();
+      tryReconnectSta();
+    }
+
+    server.handleClient();
+    updateWiFiConnect();
+    updateStaReconnect();
+
+    if (!apMode && WiFi.status() == WL_CONNECTED) {
+      mqttLoop();
+    }
+  }
+
+  if (!justStarted) {
+    handleStartRelay();
+  }
+
+  if (needRestart) {
+    logMessage("Перезагрузка...");
+    delay(2000);
+    ESP.restart();
+  }
+
+  if (!apMode && !justStarted) {
+    if (WiFi.status() != WL_CONNECTED) {
+      handleWiFiTimeout();
+    }
+  }
+
+  // Надёжная проверка концевиков с тройным чтением
+  if (!testMode) {
+    if (currentState == MOVING_FORWARD || currentState == MOVING_REVERSE) {
+      int fcaHighCount = 0;
+      int fccHighCount = 0;
+      for (int i = 0; i < 3; i++) {
+        if (digitalRead(FCA_PIN) == HIGH) fcaHighCount++;
+        if (digitalRead(FCC_PIN) == HIGH) fccHighCount++;
+        delay(10);
+      }
+
+      if (currentState == MOVING_FORWARD && fcaHighCount >= 3) {
+        logMessage("Двигатель: достигнут концевик открытия");
+        stopMotor();
+      } else if (currentState == MOVING_REVERSE && fccHighCount >= 3) {
+        logMessage("Двигатель: достигнут концевик закрытия");
+        stopMotor();
+      }
+    }
+
+    if (currentState == MOVING_FORWARD || currentState == MOVING_REVERSE) {
+      if (millis() - moveStartTime > MAX_RUN_TIME_MS) {
+        logMessage("Двигатель: превышено время работы, остановка");
+        stopMotor();
+      }
+
+      // Проверка тока после 300 мс от старта
+      if (millis() - moveStartTime > 300) {
+        float current = readCurrent();
+        if (current > settings.current_threshold) {
+          logMessage("Двигатель: ПРЕПЯТСТВИЕ! Ток: " + String(current, 2) + " А");
+          String dir = (currentState == MOVING_FORWARD) ? "FORWARD" : "REVERSE";
+          handleObstacle(dir);
+        }
+      }
+    }
+
+    if (currentState == OBSTACLE_BACKWARD) {
+      if (millis() - moveStartTime > OBSTACLE_BACK_MS) {
+        logMessage("Двигатель: откат завершён");
+        stopMotor();
+      }
+    }
+  }
+
+  delay(30);
+}

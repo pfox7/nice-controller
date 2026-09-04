@@ -6,7 +6,5 @@
 
 void currentSensorSetup();
 float readCurrent();
-void setCurrentSensorType(uint8_t type);
-void recalibrateCurrentSensor();
 
 #endif

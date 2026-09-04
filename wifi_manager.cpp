@@ -1,6 +1,7 @@
 #include "wifi_manager.h"
 #include "utils.h"
 #include "time_manager.h"
+#include "motor_control.h"   // для проверки состояния двигателя
 #include <vector>
 #include <algorithm>
 #include <esp_wifi.h>
@@ -24,7 +25,7 @@ static bool staReconnectInProgress = false;
 static unsigned long staReconnectStart = 0;
 static const unsigned long STA_RECONNECT_INTERVAL = 60000; // 60 сек
 
-// Обработчик событий Wi-Fi (совместим с ESP32 Arduino Core 3.x)
+// Обработчик событий Wi-Fi
 void WiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
   switch (event) {
     case ARDUINO_EVENT_WIFI_STA_START:
@@ -39,6 +40,16 @@ void WiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
       break;
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
       logMessage(LOG_WARN, "WiFi Event: отключен от точки доступа, причина " + String(info.wifi_sta_disconnected.reason));
+      // Принудительно переподключаемся, если не в процессе движения
+      if (currentState == IDLE && !connectInProgress && !staReconnectInProgress) {
+        WiFi.disconnect(false);
+        delay(100);
+        WiFi.mode(WIFI_AP_STA);
+        WiFi.begin(settings.sta_ssid, settings.sta_password);
+        staReconnectInProgress = true;
+        staReconnectStart = millis();
+        logMessage("Wi-Fi: принудительное переподключение после отключения");
+      }
       break;
     case ARDUINO_EVENT_WIFI_STA_GOT_IP:
       logMessage(LOG_INFO, "WiFi Event: получен IP " + IPAddress(info.got_ip.ip_info.ip.addr).toString() +
@@ -107,10 +118,8 @@ String scanWiFiNetworks() {
 void initWiFi() {
   generateDeviceId();
   
-  // Регистрируем обработчик событий
   WiFi.onEvent(WiFiEvent);
   
-  // Настройки для стабильности
   WiFi.setAutoReconnect(true);
   WiFi.setSleep(false);
   
@@ -237,11 +246,8 @@ void updateStaReconnect() {
     logMessage(LOG_INFO, "Фоновое подключение успешно, IP: " + WiFi.localIP().toString() +
                ", RSSI: " + String(WiFi.RSSI()) + " dBm");
     apMode = false;
-    // НЕ перезагружаемся! Просто продолжаем работать
     staReconnectInProgress = false;
-    // Сохраняем настройки на всякий случай
     saveSettings();
-    // Обновляем таймер для таймаута
     wifiStartTime = millis();
     TimeManager::syncNTP();
   } else if (millis() - staReconnectStart > 30000) {
@@ -256,7 +262,6 @@ void updateStaReconnect() {
 
 void handleWiFiTimeout() {
   if (!apMode && WiFi.status() != WL_CONNECTED) {
-    // Если уже идёт процесс подключения, не мешаем
     if (connectInProgress || staReconnectInProgress) return;
     
     unsigned long elapsed = (millis() - wifiStartTime) / 60000;
@@ -268,7 +273,7 @@ void handleWiFiTimeout() {
       WiFi.begin(settings.sta_ssid, settings.sta_password);
       staReconnectInProgress = true;
       staReconnectStart = millis();
-      wifiStartTime = millis(); // сброс таймера
+      wifiStartTime = millis();
     }
   }
 }
