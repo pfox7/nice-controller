@@ -25,5 +25,6 @@ bool readFCA();
 bool readFCC();
 
 void handleStartRelay();
+void handleButton();   // <-- добавлено
 
 #endif

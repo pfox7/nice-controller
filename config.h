@@ -4,7 +4,7 @@
 #include <Arduino.h>
 
 // ============ ВЕРСИЯ ============
-#define FIRMWARE_VERSION "2.6"   // Добавлены настройки датчика тока и калибровка
+#define FIRMWARE_VERSION "2.7"   // Добавлен управляющий пин (кнопка)
 
 // ============ ПИНЫ ============
 #define SSR_MAIN_PIN      25   // D3 — фаза на двигатель
@@ -15,6 +15,10 @@
 #define FCC_PIN           27   // D6
 #define CURRENT_PIN       34   // A4
 #define LED_PIN           2
+
+// Управляющий пин (кнопка/переключатель)
+#define BUTTON_PIN        12   // D11 — подача GND активирует
+#define BUTTON_ACTIVE_STATE LOW // активный уровень - LOW
 
 // Логика
 #define SSR_ON            HIGH
