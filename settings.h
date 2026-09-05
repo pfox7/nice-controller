@@ -23,6 +23,7 @@ struct Settings {
   char device_name[33];
   uint8_t wifi_timeout;
   float current_threshold;
+  float current_sensitivity;   // чувствительность датчика тока (В/А), например 0.185 для ACS712-5A
   bool mqtt_tls_enabled;
   bool mqtt_verify_depth;
   bool ca_cert_present;

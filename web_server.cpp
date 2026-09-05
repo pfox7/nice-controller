@@ -69,6 +69,7 @@ void initWebServer() {
     json += "\"ap_ip\":\"" + WiFi.softAPIP().toString() + "\",";
     json += "\"ssid\":\"" + String(apMode ? getApSSID() : settings.sta_ssid) + "\",";
     json += "\"mode\":\"" + String(apMode ? "AP" : "STA") + "\",";
+    json += "\"rssi\":" + String(apMode ? 0 : WiFi.RSSI()) + ",";   // добавлено
     json += "\"hostname\":\"" + String(settings.device_name) + ".local\",";
     json += "\"device\":\"" + String(settings.device_name) + "\",";
     json += "\"mqtt_server\":\"" + String(settings.mqtt_server) + "\",";
@@ -124,6 +125,39 @@ void initWebServer() {
       if (removeBondedDevice(server.arg("address"))) server.send(200, "text/plain", "Удалено");
       else server.send(404, "text/plain", "Не найдено");
     } else server.send(400, "text/plain", "Некорректный запрос");
+  });
+  
+  // ====== НОВЫЕ ОБРАБОТЧИКИ ДЛЯ НАСТРОЕК ДВИГАТЕЛЯ ======
+  server.on("/motor_settings", []() {
+    String json = "{\"sensitivity\":" + String(settings.current_sensitivity, 3) +
+                  ",\"threshold\":" + String(settings.current_threshold, 2) + "}";
+    server.send(200, "application/json", json);
+  });
+  
+  server.on("/save_motor_settings", HTTP_POST, []() {
+    if (server.hasArg("sensitivity")) {
+      settings.current_sensitivity = server.arg("sensitivity").toFloat();
+    }
+    if (server.hasArg("threshold")) {
+      settings.current_threshold = server.arg("threshold").toFloat();
+    }
+    saveSettings();
+    server.send(200, "text/plain", "OK");
+  });
+  
+  server.on("/recalibrate_sensor", HTTP_POST, []() {
+    recalibrateCurrentSensor();
+    server.send(200, "text/plain", "OK");
+  });
+  
+  server.on("/save_threshold", HTTP_POST, []() {
+    if (server.hasArg("threshold")) {
+      settings.current_threshold = server.arg("threshold").toFloat();
+      saveSettings();
+      server.send(200, "text/plain", "OK");
+    } else {
+      server.send(400, "text/plain", "Missing threshold");
+    }
   });
   
   // OTA-обновление
@@ -265,13 +299,15 @@ button{font-size:24px;padding:20px;margin:10px;border-radius:12px;border:none;wi
 <body>
 <h2>Управление воротами<br><small id="ver">...</small></h2>
 <div class="info">
-  IP: <span id="ip">--</span> | Имя: <span id="host">gatecontroller.local</span>
+  IP: <span id="ip">--</span> | Имя: <span id="host">gatecontroller.local</span><br>
+  Сеть: <span id="wifiSsid">--</span> | Сигнал: <span id="wifiRssi">--</span> дБм
 </div>
 <button class="open" onclick="fetch('/open')">ОТКРЫТЬ</button>
 <button class="stop" onclick="fetch('/stop')">СТОП</button>
 <button class="close" onclick="fetch('/close')">ЗАКРЫТЬ</button>
 <button class="wifi-btn" onclick="openWifiModal()">Wi-Fi</button>
 <button class="wifi-btn" onclick="document.getElementById('htmlFileInput').click()">Обновить HTML</button>
+<button class="wifi-btn" onclick="openMotorSettings()">Двигатель</button>
 <input type="file" id="htmlFileInput" accept=".html" style="display:none" onchange="uploadHTML(this.files[0])">
 <div class="status">
   Состояние: <span id="st">-</span> | Ток: <span id="cur">0.00</span> А
@@ -290,12 +326,42 @@ button{font-size:24px;padding:20px;margin:10px;border-radius:12px;border:none;wi
   </div>
 </div>
 
+<div id="motorModal" style="display:none;position:fixed;z-index:100;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,0.7)">
+  <div style="background:#222;margin:5% auto;padding:20px;border-radius:10px;width:90%;max-width:500px;text-align:center;color:#fff">
+    <h3>Настройки двигателя</h3>
+    <label>Тип датчика тока:
+      <select id="sensorType" onchange="setSensitivity()">
+        <option value="0.185">ACS712 5A (0.185 В/А)</option>
+        <option value="0.100">ACS712 20A (0.100 В/А)</option>
+        <option value="0.066">ACS712 30A (0.066 В/А)</option>
+      </select>
+    </label>
+    <label>Чувствительность (В/А): <input type="number" step="0.001" id="sensitivity" value="0.185" style="width:80px"></label>
+    <button onclick="recalibrateSensor()" style="background:#2196F3;color:#fff;padding:10px;border:none;border-radius:8px;margin:5px">Перекалибровать датчик</button>
+    <hr>
+    <label>Порог тока (А): <input type="number" step="0.1" id="threshold" value="6.0" style="width:80px"></label>
+    <button onclick="saveMotorSettings()" style="background:#4CAF50;color:#fff;padding:10px;border:none;border-radius:8px;margin:5px">Сохранить настройки</button>
+    <hr>
+    <h4>Калибровка порога</h4>
+    <p id="calibStepText">Нажмите «Начать» для запуска процесса.</p>
+    <button id="btnCalibStart" onclick="startCalibration()" style="background:#FF9800;color:#fff;padding:10px;border:none;border-radius:8px;margin:5px">Начать калибровку</button>
+    <button id="btnCalibNext" onclick="calibNext()" style="display:none;background:#FF9800;color:#fff;padding:10px;border:none;border-radius:8px;margin:5px">Готово, дальше</button>
+    <div id="calibResult" style="display:none;margin-top:10px">
+      <p>Новый порог: <input type="number" step="0.1" id="newThreshold" value=""></p>
+      <button id="btnSaveThreshold" onclick="saveCalibratedThreshold()" style="background:#4CAF50;color:#fff;padding:10px;border:none;border-radius:8px;margin:5px">Сохранить порог</button>
+    </div>
+    <button onclick="closeMotorModal()" style="background:#f44336;color:#fff;padding:10px 30px;border:none;border-radius:8px;margin-top:10px">Закрыть</button>
+  </div>
+</div>
+
 <script>
 function updateInfo(){
   fetch('/info').then(r=>r.json()).then(d=>{
     document.getElementById('ip').innerText = d.ip||'--';
     document.getElementById('host').innerText = d.hostname||'gatecontroller.local';
     document.getElementById('ver').innerText = d.version||'';
+    document.getElementById('wifiSsid').innerText = d.ssid||'--';
+    document.getElementById('wifiRssi').innerText = d.rssi||'--';
   });
 }
 function updateStatus(){
@@ -367,6 +433,116 @@ function uploadHTML(file) {
     .then(t => {
       alert('HTML обновлён. Перезагружаем...');
       setTimeout(() => location.reload(), 1000);
+    });
+}
+
+// ===== Функции для настроек двигателя =====
+function openMotorSettings() {
+  fetch('/motor_settings').then(r=>r.json()).then(d=>{
+    document.getElementById('sensitivity').value = d.sensitivity;
+    document.getElementById('threshold').value = d.threshold;
+    // установить select
+    let sel = document.getElementById('sensorType');
+    for(let i=0; i<sel.options.length; i++){
+      if(Math.abs(parseFloat(sel.options[i].value) - d.sensitivity) < 0.001){
+        sel.selectedIndex = i;
+        break;
+      }
+    }
+  });
+  document.getElementById('motorModal').style.display = 'block';
+}
+function closeMotorModal(){ document.getElementById('motorModal').style.display='none'; }
+
+function setSensitivity() {
+  let val = document.getElementById('sensorType').value;
+  document.getElementById('sensitivity').value = val;
+}
+
+function recalibrateSensor() {
+  fetch('/recalibrate_sensor', {method:'POST'})
+    .then(r=>r.text())
+    .then(t=>alert('Датчик перекалиброван'));
+}
+
+function saveMotorSettings() {
+  let sens = document.getElementById('sensitivity').value;
+  let thr = document.getElementById('threshold').value;
+  let formData = new FormData();
+  formData.append('sensitivity', sens);
+  formData.append('threshold', thr);
+  fetch('/save_motor_settings', {method:'POST', body: formData})
+    .then(r=>r.text())
+    .then(t=>alert('Настройки сохранены'));
+}
+
+// Калибровка порога
+let calibStep = 0;
+let calibValues = [0,0,0,0];
+let measuring = false;
+let maxCurrent = 0;
+let measureInterval;
+
+function startCalibration() {
+  calibStep = 1;
+  calibValues = [0,0,0,0];
+  document.getElementById('btnCalibStart').style.display = 'none';
+  document.getElementById('btnCalibNext').style.display = 'inline-block';
+  showCalibrationStep();
+}
+
+function showCalibrationStep() {
+  const steps = [
+    "Шаг 1: Включите свободный ход и остановите сами. Нажмите «Готово»",
+    "Шаг 2: Включите двигатель до полного открытия (концевик). Нажмите «Готово»",
+    "Шаг 3: Включите двигатель до полного закрытия (концевик). Нажмите «Готово»",
+    "Шаг 4: Включите двигатель и физически застопорьте его. Нажмите «Готово»"
+  ];
+  document.getElementById('calibStepText').innerText = steps[calibStep-1];
+  startMeasuring();
+}
+
+function startMeasuring() {
+  measuring = true;
+  maxCurrent = 0;
+  measureInterval = setInterval(async () => {
+    let resp = await fetch('/status');
+    let data = await resp.json();
+    if (data.current > maxCurrent) maxCurrent = data.current;
+  }, 200);
+}
+
+function stopMeasuring() {
+  measuring = false;
+  clearInterval(measureInterval);
+}
+
+function calibNext() {
+  stopMeasuring();
+  calibValues[calibStep-1] = maxCurrent;
+  calibStep++;
+  if (calibStep <= 4) {
+    showCalibrationStep();
+  } else {
+    // Вычислить порог
+    let normalAvg = (calibValues[0] + calibValues[1] + calibValues[2]) / 3;
+    let newThreshold = (normalAvg + calibValues[3]) / 2;
+    document.getElementById('newThreshold').value = newThreshold.toFixed(2);
+    document.getElementById('calibResult').style.display = 'block';
+    document.getElementById('btnCalibNext').style.display = 'none';
+    document.getElementById('calibStepText').innerText = 'Калибровка завершена. Проверьте новый порог.';
+  }
+}
+
+function saveCalibratedThreshold() {
+  let thr = document.getElementById('newThreshold').value;
+  let formData = new FormData();
+  formData.append('threshold', thr);
+  fetch('/save_threshold', {method:'POST', body: formData})
+    .then(r=>r.text())
+    .then(t=>{
+      alert('Порог сохранён: ' + thr + ' А');
+      closeMotorModal();
     });
 }
 </script>

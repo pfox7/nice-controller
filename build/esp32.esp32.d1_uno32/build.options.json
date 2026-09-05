@@ -3,7 +3,7 @@
   "builtInLibrariesFolders": "/Users/wanderer/Library/Arduino15/libraries",
   "compiler.optimization_flags": "-Os",
   "customBuildProperties": "",
-  "fqbn": "esp32:esp32:d1_uno32:UploadSpeed=460800,CPUFreq=240,FlashFreq=80,PartitionScheme=min_spiffs,DebugLevel=none,EraseFlash=none",
+  "fqbn": "esp32:esp32:d1_uno32:UploadSpeed=460800,CPUFreq=240,FlashFreq=80,PartitionScheme=min_spiffs,DebugLevel=none,EraseFlash=all",
   "hardwareFolders": "/Users/wanderer/Library/Arduino15/packages/esp32/hardware/esp32/3.3.11,/Users/wanderer/Library/Arduino15/packages/esp32/hardware/esp32/3.3.11",
   "otherLibrariesFolders": "/Users/wanderer/Documents/Arduino/libraries",
   "sketchLocation": "/Users/wanderer/Documents/Arduino/gate_controller"
