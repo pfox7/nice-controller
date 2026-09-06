@@ -8,12 +8,16 @@ bool testMode = false;
 
 static bool lastDirectionForward = true; // направление последнего движения (true = открытие)
 
-// Минимальный интервал между сменой направления (для защиты реле)
+// Защита от слишком быстрого переключения
 static unsigned long lastDirectionChange = 0;
-const unsigned long MIN_DIRECTION_CHANGE_INTERVAL = 500; // мс
+const unsigned long MIN_DIRECTION_CHANGE_INTERVAL = 800; // мс (увеличено)
+
+// Блокировка запуска сразу после остановки
+static unsigned long lastStopTime = 0;
+const unsigned long MIN_STOP_INTERVAL = 300; // мс
 
 void motorSetup() {
-  // Сначала устанавливаем безопасные уровни, потом режимы OUTPUT
+  // Безопасная инициализация пинов
   digitalWrite(SSR_MAIN_PIN, SSR_OFF);
   digitalWrite(RELAY_CAP_PIN, RELAY_OFF);
   digitalWrite(START_RELAY_PIN, RELAY_OFF);
@@ -26,15 +30,25 @@ void motorSetup() {
   pinMode(FCC_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
 
+  // Чтобы первый запуск не блокировался
+  lastStopTime = millis() - 1000;
+  lastDirectionChange = millis() - 1000;
+
   logMessage("Двигатель: инициализирован (1 SSR + 2 реле)");
 }
 
 void startForward() {
   testMode = false;
   
+  // Блокировка, если прошло мало времени после остановки
+  if (millis() - lastStopTime < MIN_STOP_INTERVAL) {
+    logMessage("Двигатель: слишком рано после остановки, ОТКРЫТЬ игнорируется");
+    return;
+  }
+  
   // Защита от слишком быстрого переключения
   if (millis() - lastDirectionChange < MIN_DIRECTION_CHANGE_INTERVAL) {
-    logMessage("Двигатель: слишком частое переключение, игнорируем ОТКРЫТЬ");
+    logMessage("Двигатель: слишком частое переключение, ОТКРЫТЬ игнорируется");
     return;
   }
   
@@ -52,17 +66,23 @@ void startForward() {
   currentState = MOVING_FORWARD;
   moveStartTime = millis();
   digitalWrite(LED_PIN, HIGH);
-  lastDirectionForward = true;              // запоминаем направление
-  lastDirectionChange = millis();           // фиксируем время
+  lastDirectionForward = true;
+  lastDirectionChange = millis();
   logMessage("Двигатель: ОТКРЫТЬ");
 }
 
 void startReverse() {
   testMode = false;
   
+  // Блокировка, если прошло мало времени после остановки
+  if (millis() - lastStopTime < MIN_STOP_INTERVAL) {
+    logMessage("Двигатель: слишком рано после остановки, ЗАКРЫТЬ игнорируется");
+    return;
+  }
+  
   // Защита от слишком быстрого переключения
   if (millis() - lastDirectionChange < MIN_DIRECTION_CHANGE_INTERVAL) {
-    logMessage("Двигатель: слишком частое переключение, игнорируем ЗАКРЫТЬ");
+    logMessage("Двигатель: слишком частое переключение, ЗАКРЫТЬ игнорируется");
     return;
   }
   
@@ -72,16 +92,16 @@ void startReverse() {
   }
   
   stopMotor();
-  delay(100);                               // ждём полного выключения SSR
-  digitalWrite(RELAY_CAP_PIN, RELAY_ON);    // сначала переключаем реле (без тока)
-  delay(20);                                // даём контактам успокоиться
-  digitalWrite(SSR_MAIN_PIN, SSR_ON);       // затем включаем SSR
+  delay(100);
+  digitalWrite(RELAY_CAP_PIN, RELAY_ON);    // сначала реле
+  delay(20);
+  digitalWrite(SSR_MAIN_PIN, SSR_ON);       // затем SSR
   
   currentState = MOVING_REVERSE;
   moveStartTime = millis();
   digitalWrite(LED_PIN, HIGH);
-  lastDirectionForward = false;             // запоминаем направление
-  lastDirectionChange = millis();           // фиксируем время
+  lastDirectionForward = false;
+  lastDirectionChange = millis();
   logMessage("Двигатель: ЗАКРЫТЬ");
 }
 
@@ -95,6 +115,10 @@ void stopMotor() {
   
   currentState = IDLE;
   digitalWrite(LED_PIN, LOW);
+  
+  // Запоминаем время остановки
+  lastStopTime = millis();
+  
   logMessage("Двигатель: СТОП");
 }
 
@@ -123,14 +147,12 @@ void handleObstacle(String direction) {
   
   // Определяем новое направление и включаем с правильной последовательностью
   if (direction == "FORWARD") {
-    // Было движение вперёд, теперь назад (закрытие)
     digitalWrite(RELAY_CAP_PIN, RELAY_ON);   // реле для закрытия
     delay(20);
     digitalWrite(SSR_MAIN_PIN, SSR_ON);
     currentState = MOVING_REVERSE;
     lastDirectionForward = false;
   } else {
-    // Было движение назад, теперь вперёд (открытие)
     digitalWrite(RELAY_CAP_PIN, RELAY_OFF);  // реле для открытия
     delay(20);
     digitalWrite(SSR_MAIN_PIN, SSR_ON);
@@ -141,6 +163,11 @@ void handleObstacle(String direction) {
   moveStartTime = millis();
   digitalWrite(LED_PIN, HIGH);
   currentState = OBSTACLE_BACKWARD;  // переопределяем состояние для логики отката
+  
+  // Обновляем время смены направления, чтобы после отката новые команды не блокировались
+  lastDirectionChange = millis();
+  lastStopTime = millis() - MIN_STOP_INTERVAL; // снимаем блокировку сразу после отката
+  
   logMessage("Двигатель: откат запущен");
 }
 
@@ -213,7 +240,7 @@ void handleStartRelay() {
   }
 }
 
-// ========== ОБРАБОТКА КНОПКИ (если используется) ==========
+// ========== ОБРАБОТКА КНОПКИ ==========
 void handleButton() {
   static unsigned long lastDebounceTime = 0;
   static int lastButtonState = HIGH;      // начальное состояние (не нажата)
@@ -221,44 +248,33 @@ void handleButton() {
 
   int reading = digitalRead(BUTTON_PIN);
 
-  // Если состояние изменилось, сбросить таймер дребезга
   if (reading != lastButtonState) {
     lastDebounceTime = millis();
   }
 
-  // Если состояние стабильно дольше 50 мс
-  if ((millis() - lastDebounceTime) > 50) {
-    // Если состояние изменилось с прошлого стабильного
+  // Увеличенный дребезг – 100 мс
+  if ((millis() - lastDebounceTime) > 100) {
     if (reading != buttonState) {
       buttonState = reading;
-      // Реагируем только на нажатие (переход в активное состояние)
       if (buttonState == BUTTON_ACTIVE_STATE) {
         logMessage("Кнопка нажата");
 
-        // Если двигатель движется — остановить
         if (currentState == MOVING_FORWARD || currentState == MOVING_REVERSE || currentState == OBSTACLE_BACKWARD) {
           stopMotor();
         } else {
-          // Остановлен, решаем направление
-          bool fca = digitalRead(FCA_PIN); // HIGH = нажат (открыто)
-          bool fcc = digitalRead(FCC_PIN); // HIGH = нажат (закрыто)
+          bool fca = digitalRead(FCA_PIN);
+          bool fcc = digitalRead(FCC_PIN);
 
           if (lastDirectionForward) {
-            // Последнее движение было "открыть"
             if (!fcc) {
-              // Не закрыто -> закрываем
               startReverse();
             } else {
-              // Закрыто -> открываем
               startForward();
             }
           } else {
-            // Последнее движение было "закрыть"
             if (!fca) {
-              // Не открыто -> открываем
               startForward();
             } else {
-              // Открыто -> закрываем
               startReverse();
             }
           }
@@ -267,6 +283,5 @@ void handleButton() {
     }
   }
 
-  // Сохраняем текущее чтение для следующего цикла
   lastButtonState = reading;
 }
