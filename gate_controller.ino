@@ -78,6 +78,9 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 
+  // Инициализация управляющего пина (кнопка)
+  pinMode(BUTTON_PIN, INPUT_PULLUP);   // <-- добавлено
+
   logMessage("Инициализация двигателя");
   motorSetup();
 
@@ -144,6 +147,9 @@ void setup() {
 }
 
 void loop() {
+  // Обработка кнопки (всегда)
+  handleButton();   // <-- добавлено
+
   bool justStarted = (currentState == MOVING_FORWARD || currentState == MOVING_REVERSE) &&
                      (millis() - moveStartTime < 50);
 

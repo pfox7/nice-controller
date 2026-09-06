@@ -1,13 +1,11 @@
 #include "current_sensor.h"
 #include "utils.h"
+#include "settings.h"
 
 static float vref = 2.50;
 
-void currentSensorSetup() {
-  analogReadResolution(12);
-  analogSetAttenuation(ADC_11db);
-  pinMode(CURRENT_PIN, INPUT);
-
+// Внутренняя функция калибровки опорного напряжения
+static void calibrateVref() {
   // Ждём, чтобы двигатель гарантированно был остановлен
   delay(500);
 
@@ -23,6 +21,20 @@ void currentSensorSetup() {
 
   logMessage("Датчик тока: калибровка, Vref=" + String(vref, 3) + " В");
   Serial.printf("Отладочное Vref: %.3f В\n", vref);
+}
+
+void currentSensorSetup() {
+  analogReadResolution(12);
+  analogSetAttenuation(ADC_11db);
+  pinMode(CURRENT_PIN, INPUT);
+
+  calibrateVref();
+}
+
+// Принудительная перекалибровка
+void recalibrateCurrentSensor() {
+  calibrateVref();
+  logMessage("Датчик тока: перекалиброван, Vref=" + String(vref, 3) + " В");
 }
 
 float readCurrent() {
@@ -52,7 +64,7 @@ float readCurrent() {
   }
   float avgRaw = (float)sum / 50;
   float voltage = avgRaw * (3.3f / 4095.0f);
-  float current = (voltage - vref) / 0.185f;  // ACS712-5A
+  float current = (voltage - vref) / settings.current_sensitivity;  // используем настройку
 
   Serial.printf("Raw avg=%d, V=%.3f, I=%.2f A\n", (int)avgRaw, voltage, current);
 

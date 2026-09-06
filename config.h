@@ -4,7 +4,7 @@
 #include <Arduino.h>
 
 // ============ ВЕРСИЯ ============
-#define FIRMWARE_VERSION "2.5"   // Исправление датчика тока и защиты
+#define FIRMWARE_VERSION "2.7"   // Добавлен управляющий пин (кнопка)
 
 // ============ ПИНЫ ============
 #define SSR_MAIN_PIN      25   // D3 — фаза на двигатель
@@ -16,6 +16,10 @@
 #define CURRENT_PIN       34   // A4
 #define LED_PIN           2
 
+// Управляющий пин (кнопка/переключатель)
+#define BUTTON_PIN        12   // D11 — подача GND активирует
+#define BUTTON_ACTIVE_STATE LOW // активный уровень - LOW
+
 // Логика
 #define SSR_ON            HIGH
 #define SSR_OFF           LOW
@@ -24,6 +28,7 @@
 
 // Параметры
 #define DEFAULT_THRESHOLD 6.0f
+#define DEFAULT_SENSITIVITY 0.185f   // ACS712-5A
 #define START_DELAY_MS    300    // защита по току включается через 300 мс
 #define OBSTACLE_BACK_MS  1500
 #define MAX_RUN_TIME_MS   30000

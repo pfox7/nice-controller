@@ -6,5 +6,6 @@
 
 void currentSensorSetup();
 float readCurrent();
+void recalibrateCurrentSensor();   // принудительная перекалибровка без перезагрузки
 
 #endif

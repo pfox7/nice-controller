@@ -31,6 +31,10 @@ bool validateSettings() {
     logMessage("Настройки: некорректный порог тока");
     return false;
   }
+  if (settings.current_sensitivity < 0.01f || settings.current_sensitivity > 1.0f) {
+    logMessage("Настройки: некорректная чувствительность датчика тока");
+    return false;
+  }
   if (settings.wifi_timeout > 60) {
     logMessage("Настройки: некорректный таймаут Wi-Fi");
     return false;
@@ -66,6 +70,7 @@ void initSettings() {
   settings.timezone = prefs.getChar("tz", 3);
   settings.mqtt_port = prefs.getUShort("mqtt_port", 1883);
   settings.current_threshold = prefs.getFloat("cur_thr", DEFAULT_THRESHOLD);
+  settings.current_sensitivity = prefs.getFloat("cur_sens", DEFAULT_SENSITIVITY);
   settings.wifi_timeout = prefs.getUChar("wifi_to", 5);
   
   settings.ble_enabled = prefs.getBool("ble_en", false);
@@ -124,6 +129,7 @@ void initSettings() {
   logMessage("  Порт MQTT: " + String(settings.mqtt_port));
   logMessage("  Топик MQTT: " + String(settings.mqtt_topic));
   logMessage("  Порог тока: " + String(settings.current_threshold, 1) + " А");
+  logMessage("  Чувствительность датчика тока: " + String(settings.current_sensitivity, 3) + " В/А");
   logMessage("  Таймаут Wi-Fi: " + String(settings.wifi_timeout) + " мин");
   logMessage("  BLE: " + String(settings.ble_enabled ? "да" : "нет"));
   logMessage("  Retain: " + String(settings.mqtt_retain ? "да" : "нет"));
@@ -137,6 +143,7 @@ void resetSettings() {
   settings.mqtt_port = 1883;
   settings.wifi_timeout = 5;
   settings.current_threshold = DEFAULT_THRESHOLD;
+  settings.current_sensitivity = DEFAULT_SENSITIVITY;
   strcpy(settings.mqtt_topic, "gate");
   settings.timezone = 3;
   logMessage("Настройки сброшены на значения по умолчанию");
@@ -148,6 +155,7 @@ void saveSettings() {
   prefs.putChar("tz", settings.timezone);
   prefs.putUShort("mqtt_port", settings.mqtt_port);
   prefs.putFloat("cur_thr", settings.current_threshold);
+  prefs.putFloat("cur_sens", settings.current_sensitivity);
   prefs.putUChar("wifi_to", settings.wifi_timeout);
   
   prefs.putBool("ble_en", settings.ble_enabled);
@@ -176,6 +184,8 @@ void saveSettings() {
              ", MQTT: " + String(settings.mqtt_server) +
              ":" + String(settings.mqtt_port) +
              ", Топик: " + String(settings.mqtt_topic) +
+             ", Порог тока: " + String(settings.current_threshold, 1) +
+             ", Чувствительность: " + String(settings.current_sensitivity, 3) +
              ", Retain: " + String(settings.mqtt_retain ? "да" : "нет") +
              ", BLE: " + String(settings.ble_enabled ? "вкл" : "выкл") +
              ", Wi-Fi: " + String(settings.sta_ssid));
