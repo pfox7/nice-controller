@@ -61,6 +61,16 @@ void ensureIndexHTML() {
 
 void setup() {
   Serial.begin(115200);
+
+  // ====== НЕМЕДЛЕННАЯ НАСТРОЙКА ПИНОВ ДЛЯ ПРЕДОТВРАЩЕНИЯ ВКЛЮЧЕНИЯ РЕЛЕ/SSR ======
+  pinMode(SSR_MAIN_PIN, OUTPUT);
+  pinMode(RELAY_CAP_PIN, OUTPUT);
+  pinMode(START_RELAY_PIN, OUTPUT);
+  digitalWrite(SSR_MAIN_PIN, SSR_OFF);
+  digitalWrite(RELAY_CAP_PIN, RELAY_OFF);   // HIGH
+  digitalWrite(START_RELAY_PIN, START_SSR_OFF); // LOW (или HIGH, смотря какой SSR)
+  // =============================================================================
+
   delay(1000);
 
   logInit();
@@ -79,10 +89,10 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
 
   // Инициализация управляющего пина (кнопка)
-  pinMode(BUTTON_PIN, INPUT_PULLUP);   // <-- добавлено
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
 
   logMessage("Инициализация двигателя");
-  motorSetup();
+  motorSetup();   // повторная инициализация не помешает, уже выполнена выше
 
   logMessage("Инициализация датчика тока");
   currentSensorSetup();
@@ -148,7 +158,7 @@ void setup() {
 
 void loop() {
   // Обработка кнопки (всегда)
-  handleButton();   // <-- добавлено
+  handleButton();
 
   bool justStarted = (currentState == MOVING_FORWARD || currentState == MOVING_REVERSE) &&
                      (millis() - moveStartTime < 50);

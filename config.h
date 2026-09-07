@@ -4,12 +4,12 @@
 #include <Arduino.h>
 
 // ============ ВЕРСИЯ ============
-#define FIRMWARE_VERSION "2.7"   // Добавлен управляющий пин (кнопка)
+#define FIRMWARE_VERSION "2.8.1"   // Ранняя инициализация пинов, поддержка пускового SSR
 
 // ============ ПИНЫ ============
 #define SSR_MAIN_PIN      25   // D3 — фаза на двигатель
 #define RELAY_CAP_PIN     16   // D5 — рабочий конденсатор
-#define START_RELAY_PIN   13   // D9 — пусковой конденсатор
+#define START_RELAY_PIN   13   // D9 — пусковой конденсатор (теперь SSR)
 
 #define FCA_PIN           14   // D7
 #define FCC_PIN           27   // D6
@@ -20,11 +20,17 @@
 #define BUTTON_PIN        12   // D11 — подача GND активирует
 #define BUTTON_ACTIVE_STATE LOW // активный уровень - LOW
 
-// Логика
-#define SSR_ON            HIGH
-#define SSR_OFF           LOW
+// Логика для электромеханического реле (рабочий конденсатор)
 #define RELAY_ON          LOW
 #define RELAY_OFF         HIGH
+
+// Логика для пускового SSR (активный HIGH, если у вас LOW - поменяйте местами)
+#define START_SSR_ON      HIGH
+#define START_SSR_OFF     LOW
+
+// Логика для основного SSR фазы
+#define SSR_ON            HIGH
+#define SSR_OFF           LOW
 
 // Параметры
 #define DEFAULT_THRESHOLD 6.0f
